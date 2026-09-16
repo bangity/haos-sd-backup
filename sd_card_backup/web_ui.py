@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {
     "rclone_sync_enabled": False,
     "rclone_remote_target": "",
     "smtp_enabled": False,
-    "smtp_host": "smtp.gmail.com",
+    "smtp_host": "",
     "smtp_port": 587,
     "smtp_user": "",
     "smtp_pass": "",
@@ -35,8 +35,7 @@ def get_config():
     if os.path.exists(OPTIONS_FILE):
         try:
             with open(OPTIONS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                cfg.update(data)
+                cfg.update(json.load(f))
         except Exception:
             pass
     return cfg
@@ -49,7 +48,7 @@ def save_config(new_opts):
         json.dump(cfg, f, indent=2)
     return cfg
 
-class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
+class WebDashboardHandler(BaseHTTPRequestHandler):
     def send_json(self, data, status=200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -74,7 +73,7 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HAOS Hardware Recovery &amp; Storage Suite</title>
+  <title>HAOS SD Backup &amp; Storage Suite</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
@@ -82,12 +81,10 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
   <style>
     :root {{
       --md-primary: #8AB4F8;
-      --md-on-primary: #002A5A;
-      --md-primary-container: #1A73E8;
-      --md-surface: #131316;
+      --md-surface: #121316;
       --md-surface-container: #1E1F24;
       --md-surface-container-high: #2B2D33;
-      --md-surface-container-highest: #373940;
+      --md-surface-container-highest: #373A42;
       --md-outline: #52555E;
       --md-outline-variant: #3F424A;
       --md-on-surface: #E3E4E8;
@@ -109,244 +106,108 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
     }}
     .app-frame {{ width: 100%; max-width: 1080px; display: flex; flex-direction: column; gap: 1.5rem; }}
 
-    /* --- GENERATED VECTOR HERO BANNER --- */
     .hero-banner {{
       position: relative;
       background: linear-gradient(135deg, #0D214F 0%, #153E7E 50%, #1A56A6 100%);
-      border-radius: 28px;
-      padding: 2.25rem 2.5rem;
-      overflow: hidden;
+      border-radius: 24px;
+      padding: 2rem 2.25rem;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
     }}
-    .hero-svg-bg {{
-      position: absolute;
-      top: 0; right: 0; bottom: 0; left: 0;
-      width: 100%; height: 100%;
-      pointer-events: none;
-      opacity: 0.22;
-    }}
-    .hero-content {{ position: relative; z-index: 2; max-width: 680px; }}
     .hero-title {{
       font-family: 'Google Sans', sans-serif;
-      font-size: 1.85rem;
+      font-size: 1.75rem;
       font-weight: 700;
-      letter-spacing: -0.02em;
       color: #FFFFFF;
       display: flex;
       align-items: center;
-      gap: 0.85rem;
+      gap: 0.75rem;
     }}
-    .hero-subtitle {{
-      margin-top: 0.4rem;
-      font-size: 0.95rem;
-      color: #D2E3FC;
-      opacity: 0.95;
-    }}
-    .hero-badges {{ display: flex; gap: 0.65rem; margin-top: 1.25rem; flex-wrap: wrap; }}
-    .hero-chip {{
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      padding: 0.35rem 0.85rem;
-      border-radius: 14px;
-      font-size: 0.8rem;
-      font-weight: 500;
-      background: rgba(255, 255, 255, 0.12);
-      backdrop-filter: blur(12px);
-      color: #FFFFFF;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-    }}
+    .hero-subtitle {{ margin-top: 0.35rem; font-size: 0.92rem; color: #D2E3FC; }}
 
-    /* --- STATS & CARDS --- */
-    .grid-stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }}
+    .nav-tabs {{
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 2px solid var(--md-outline-variant);
+      padding-bottom: 0.5rem;
+    }}
+    .nav-tab {{
+      background: transparent;
+      border: none;
+      color: var(--md-on-surface-variant);
+      padding: 0.65rem 1.25rem;
+      font-size: 0.95rem;
+      font-weight: 500;
+      border-radius: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s;
+    }}
+    .nav-tab:hover {{ background: var(--md-surface-container); color: var(--md-on-surface); }}
+    .nav-tab.active {{ background: var(--md-surface-container-high); color: var(--md-primary); font-weight: 700; }}
+
     .m3-card {{
       background: var(--md-surface-container);
       border-radius: 20px;
       border: 1px solid var(--md-outline-variant);
-      padding: 1.35rem;
+      padding: 1.5rem;
       display: flex;
       flex-direction: column;
-      gap: 0.5rem;
-      position: relative;
-      overflow: hidden;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+      gap: 1rem;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
     }}
-    .m3-card-accent {{ position: absolute; top: 0; left: 0; right: 0; height: 4px; }}
-    .stat-label {{ font-size: 0.78rem; font-weight: 500; color: var(--md-on-surface-variant); text-transform: uppercase; letter-spacing: 0.05em; }}
-    .stat-value {{ font-family: 'Google Sans', 'Roboto', sans-serif; font-size: 1.6rem; font-weight: 600; }}
+    .card-title {{
+      font-family: 'Google Sans', sans-serif;
+      font-size: 1.15rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }}
 
-    /* --- BUTTONS & ACTIONS --- */
-    .actions-shelf {{ display: flex; gap: 0.75rem; flex-wrap: wrap; }}
     .m3-button {{
       display: inline-flex;
       align-items: center;
-      gap: 0.55rem;
-      height: 44px;
-      padding: 0 1.35rem;
-      border-radius: 22px;
-      font-family: 'Google Sans', 'Roboto', sans-serif;
-      font-size: 0.92rem;
+      gap: 0.5rem;
+      height: 42px;
+      padding: 0 1.25rem;
+      border-radius: 21px;
+      font-family: 'Google Sans', sans-serif;
+      font-size: 0.9rem;
       font-weight: 500;
       border: none;
       cursor: pointer;
-      transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+      transition: all 0.2s;
     }}
     .btn-filled {{ background: var(--google-blue); color: #FFFFFF; }}
-    .btn-filled:hover {{ filter: brightness(1.1); box-shadow: 0 4px 14px rgba(66, 133, 244, 0.45); }}
+    .btn-filled:hover {{ filter: brightness(1.12); box-shadow: 0 4px 12px rgba(66, 133, 244, 0.4); }}
     .btn-tonal {{ background: var(--md-surface-container-high); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); }}
     .btn-tonal:hover {{ background: var(--md-surface-container-highest); }}
-    .btn-config {{ background: linear-gradient(135deg, #1E8E3E 0%, #34A853 100%); color: #FFFFFF; box-shadow: 0 4px 14px rgba(52, 168, 83, 0.35); }}
-    .btn-config:hover {{ filter: brightness(1.12); }}
 
-    /* --- PROGRESS --- */
     .progress-bar-container {{
       width: 100%;
-      height: 8px;
+      height: 10px;
       background: var(--md-surface-container-high);
-      border-radius: 4px;
+      border-radius: 5px;
       overflow: hidden;
+      margin-top: 0.5rem;
       display: none;
     }}
     .progress-bar-fill {{
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, var(--google-blue), #A8C7FA);
-      border-radius: 4px;
-      transition: width 0.35s ease;
+      background: linear-gradient(90deg, var(--google-blue), #8AB4F8);
+      border-radius: 5px;
+      transition: width 0.3s;
     }}
 
-    /* --- TABLE & CONSOLE --- */
-    .data-table {{ width: 100%; border-collapse: collapse; margin-top: 0.5rem; }}
-    .data-table th {{
-      text-align: left;
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      color: var(--md-on-surface-variant);
-      padding: 0.85rem 0.6rem;
-      border-bottom: 1px solid var(--md-outline-variant);
-    }}
-    .data-table td {{
-      padding: 0.85rem 0.6rem;
-      font-size: 0.88rem;
-      border-bottom: 1px solid var(--md-outline-variant);
-    }}
-    pre.console-box {{
-      background: #0D0E11;
-      border: 1px solid var(--md-outline-variant);
-      border-radius: 14px;
-      padding: 1.15rem;
-      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-      font-size: 0.83rem;
-      line-height: 1.5;
-      color: #CFD3DC;
-      max-height: 360px;
-      overflow-y: auto;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }}
-
-    /* --- MATERIAL MODAL SYSTEM --- */
-    .dialog-overlay {{
-      display: none;
-      position: fixed;
-      top: 0; left: 0; width: 100vw; height: 100vh;
-      background: rgba(0, 0, 0, 0.78);
-      backdrop-filter: blur(6px);
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-    }}
-    .m3-dialog {{
-      background: var(--md-surface-container);
-      border-radius: 28px;
-      width: 94%;
-      max-width: 760px;
-      max-height: 90vh;
-      display: flex;
-      flex-direction: column;
-      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
-      border: 1px solid var(--md-outline-variant);
-      overflow: hidden;
-      animation: dialogZoom 0.2s cubic-bezier(0.1, 0.9, 0.2, 1);
-    }}
-    @keyframes dialogZoom {{
-      from {{ transform: scale(0.95); opacity: 0; }}
-      to {{ transform: scale(1); opacity: 1; }}
-    }}
-    .dialog-header {{
-      padding: 1.4rem 1.85rem;
-      border-bottom: 1px solid var(--md-outline-variant);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: var(--md-surface-container-high);
-    }}
-    .dialog-tabs {{
-      display: flex;
-      gap: 0.5rem;
-      padding: 0.65rem 1.85rem;
-      background: var(--md-surface-container-high);
-      border-bottom: 1px solid var(--md-outline-variant);
-      overflow-x: auto;
-    }}
-    .tab-btn {{
-      background: transparent;
-      border: none;
-      color: var(--md-on-surface-variant);
-      padding: 0.5rem 1rem;
-      font-size: 0.88rem;
-      font-weight: 500;
-      border-radius: 18px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-    }}
-    .tab-btn.active {{
-      background: var(--md-surface-container-highest);
-      color: var(--md-primary);
-    }}
-    .dialog-body {{
-      padding: 1.85rem;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 1.35rem;
-    }}
-    .dialog-footer {{
-      padding: 1.15rem 1.85rem;
-      border-top: 1px solid var(--md-outline-variant);
-      display: flex;
-      justify-content: flex-end;
-      gap: 0.85rem;
-      background: var(--md-surface-container-high);
-    }}
-
-    /* --- FORM CONTROLS & DRIVE CARDS --- */
-    .form-group {{ display: flex; flex-direction: column; gap: 0.45rem; }}
-    .form-label {{ font-size: 0.9rem; font-weight: 500; color: var(--md-on-surface); display: flex; align-items: center; gap: 0.4rem; }}
-    .form-desc {{ font-size: 0.8rem; color: var(--md-on-surface-variant); line-height: 1.4; }}
-    .form-input, .form-select {{
-      background: #141518;
-      border: 1px solid var(--md-outline);
-      color: #FFFFFF;
-      padding: 0.75rem 1rem;
-      border-radius: 10px;
-      font-size: 0.92rem;
-      outline: none;
-      transition: border-color 0.2s;
-    }}
-    .form-input:focus, .form-select:focus {{
-      border-color: var(--md-primary);
-      box-shadow: 0 0 0 3px rgba(138, 180, 248, 0.25);
-    }}
-
-    .drive-cards-grid {{ display: grid; grid-template-columns: 1fr; gap: 0.75rem; margin-top: 0.35rem; }}
-    .drive-card {{
+    .selection-grid {{ display: grid; grid-template-columns: 1fr; gap: 0.75rem; margin-top: 0.5rem; }}
+    .selectable-card {{
       background: #15161A;
       border: 2px solid var(--md-outline-variant);
       border-radius: 14px;
@@ -355,12 +216,37 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
       align-items: center;
       justify-content: space-between;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: border-color 0.2s, background 0.2s;
     }}
-    .drive-card:hover {{ border-color: var(--md-primary); background: #1B1D23; }}
-    .drive-card.selected {{
+    .selectable-card:hover {{ border-color: var(--md-primary); background: #1B1D23; }}
+    .selectable-card.selected {{
       border-color: var(--google-blue);
-      background: rgba(66, 133, 244, 0.1);
+      background: rgba(66, 133, 244, 0.12);
+    }}
+
+    .badge {{
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--md-primary);
+    }}
+    .badge-cifs {{ background: rgba(52, 168, 83, 0.2); color: var(--google-green); }}
+
+    .form-input, .form-select {{
+      background: #15161A;
+      border: 1px solid var(--md-outline);
+      color: #FFFFFF;
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      font-size: 0.92rem;
+      outline: none;
+    }}
+    .form-input:focus, .form-select:focus {{
+      border-color: var(--md-primary);
+      box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.25);
     }}
 
     .filter-chip-group {{ display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.3rem; }}
@@ -376,29 +262,39 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
       user-select: none;
     }}
     .filter-chip.active {{
-      background: var(--md-primary-container);
+      background: var(--google-blue);
       border-color: var(--md-primary);
       color: #FFFFFF;
     }}
 
-    .guide-box {{
-      background: rgba(66, 133, 244, 0.08);
-      border-left: 4px solid var(--google-blue);
-      padding: 1.15rem;
-      border-radius: 0 10px 10px 0;
-      font-size: 0.86rem;
-      line-height: 1.5;
-      color: #D2E3FC;
+    .data-table {{ width: 100%; border-collapse: collapse; }}
+    .data-table th {{
+      text-align: left;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      color: var(--md-on-surface-variant);
+      padding: 0.75rem 0.5rem;
+      border-bottom: 1px solid var(--md-outline-variant);
     }}
-    .code-pill {{
+    .data-table td {{
+      padding: 0.75rem 0.5rem;
+      font-size: 0.85rem;
+      border-bottom: 1px solid var(--md-outline-variant);
+    }}
+    pre.console-box {{
       background: #0E0F12;
-      padding: 0.2rem 0.5rem;
-      border-radius: 6px;
-      font-family: monospace;
-      color: var(--md-primary);
       border: 1px solid var(--md-outline-variant);
+      border-radius: 12px;
+      padding: 1rem;
+      font-family: monospace;
+      font-size: 0.82rem;
+      line-height: 1.45;
+      color: #D1D5DB;
+      max-height: 380px;
+      overflow-y: auto;
+      white-space: pre-wrap;
     }}
-    .toast-msg {{
+    .toast {{
       position: fixed;
       bottom: 24px;
       left: 50%;
@@ -408,202 +304,152 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
       padding: 0.8rem 1.6rem;
       border-radius: 24px;
       font-size: 0.9rem;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      border: 1px solid var(--md-outline);
-      z-index: 2000;
       display: none;
+      z-index: 2000;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
     }}
   </style>
 </head>
 <body>
   <div class="app-frame">
 
-    <!-- CODE-GENERATED SVG HERO HEADER -->
     <div class="hero-banner">
-      <svg class="hero-svg-bg" viewBox="0 0 850 320" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M-50,140 Q180,60 380,160 T850,90 L850,320 L-50,320 Z" fill="#FFFFFF" fill-opacity="0.9" />
-        <circle cx="720" cy="90" r="160" stroke="#FFFFFF" stroke-width="2.5" stroke-dasharray="10 10" />
-        <circle cx="720" cy="90" r="100" stroke="#FFFFFF" stroke-width="1.5" />
-        <path d="M620,90 L820,90 M720,-10 L720,190" stroke="#FFFFFF" stroke-width="1.5" />
-        <rect x="180" y="40" width="90" height="50" rx="10" stroke="#FFFFFF" stroke-width="1.5" stroke-dasharray="6 6" />
-        <path d="M225,90 L225,120 M225,120 L380,160" stroke="#FFFFFF" stroke-width="1.5" />
-      </svg>
-
-      <div class="hero-content">
+      <div>
         <div class="hero-title">
-          <span class="material-symbols-outlined" style="font-size: 34px; color: #8AB4F8;">hard_drive_2</span>
-          HAOS Master Backup &amp; Storage Health
+          <span class="material-symbols-outlined" style="font-size: 32px; color: #8AB4F8;">sd_storage</span>
+          HAOS SD Backup &amp; Storage Health
         </div>
-        <div class="hero-subtitle">
-          Commercial-grade live block sector replication, JEDEC hardware wear analytics, and companion disaster recovery automation.
-        </div>
-        <div class="hero-badges">
-          <span class="hero-chip"><span class="material-symbols-outlined" style="font-size: 16px;">lock_open</span> Protection Mode OFF</span>
-          <span class="hero-chip"><span class="material-symbols-outlined" style="font-size: 16px;">speed</span> Parallel pigz</span>
-          <span class="hero-chip"><span class="material-symbols-outlined" style="font-size: 16px;">cloud_sync</span> Rclone 3-2-1 Ready</span>
-          <span class="hero-chip"><span class="material-symbols-outlined" style="font-size: 16px;">terminal</span> GPT Relocation</span>
-        </div>
+        <div class="hero-subtitle">Production sector-level disk replication, flash wear analytics, and disaster recovery</div>
       </div>
-
-      <div style="z-index: 3;">
-        <button class="m3-button btn-config" onclick="openConfigModal()">
-          <span class="material-symbols-outlined">tune</span> Configure Suite
-        </button>
-      </div>
+      <span style="font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 0.4rem 0.8rem; border-radius: 12px;">v1.2.0</span>
     </div>
 
-    <!-- PROGRESS BAR -->
-    <div class="progress-bar-container" id="global-progress">
-      <div class="progress-bar-fill" id="global-progress-fill"></div>
+    <!-- MAIN APP NAVIGATION -->
+    <div class="nav-tabs">
+      <button class="nav-tab active" id="tab-btn-backups" onclick="switchMainTab('backups')">
+        <span class="material-symbols-outlined">backup</span> Backups &amp; Execution
+      </button>
+      <button class="nav-tab" id="tab-btn-config" onclick="switchMainTab('config')">
+        <span class="material-symbols-outlined">tune</span> Storage &amp; Schedule Config
+      </button>
+      <button class="nav-tab" id="tab-btn-health" onclick="switchMainTab('health')">
+        <span class="material-symbols-outlined">monitor_heart</span> Wear Health &amp; Logs
+      </button>
     </div>
 
-    <!-- METRICS OVERVIEW -->
-    <div class="grid-stats">
+    <!-- TAB 1: BACKUPS & ON-DEMAND EXECUTION -->
+    <div id="tab-content-backups" style="display: flex; flex-direction: column; gap: 1.5rem;">
       <div class="m3-card">
-        <div class="m3-card-accent" style="background: var(--google-blue);"></div>
-        <div class="stat-label">Backup Engine State</div>
-        <div class="stat-value" id="val-status">--</div>
-        <p id="sub-status" style="font-size: 0.8rem; color: var(--md-on-surface-variant);">Daemon Monitoring</p>
-      </div>
-      <div class="m3-card">
-        <div class="m3-card-accent" style="background: var(--google-yellow);"></div>
-        <div class="stat-label">Flash Memory Wear</div>
-        <div class="stat-value" id="val-wear" style="color: var(--google-yellow);">--%</div>
-        <p id="sub-wear" style="font-size: 0.8rem; color: var(--md-on-surface-variant);">Warning Limit: {cfg['safe_wear_threshold']}%</p>
-      </div>
-      <div class="m3-card">
-        <div class="m3-card-accent" style="background: var(--google-green);"></div>
-        <div class="stat-label">Hardware Life State</div>
-        <div class="stat-value" id="val-health">--</div>
-        <p id="sub-health" style="font-size: 0.8rem; color: var(--md-on-surface-variant);">Reserve Health Verified</p>
-      </div>
-    </div>
-
-    <!-- ACTION BUTTONS -->
-    <div class="actions-shelf">
-      <button class="m3-button btn-filled" onclick="openConfirmationModal()">
-        <span class="material-symbols-outlined">play_arrow</span> Run Backup Now
-      </button>
-      <button class="m3-button btn-tonal" onclick="triggerAction('wear')">
-        <span class="material-symbols-outlined">monitor_heart</span> Refresh Wear Telemetry
-      </button>
-      <button class="m3-button btn-tonal" onclick="openRecoveryGuideModal()">
-        <span class="material-symbols-outlined">menu_book</span> How to Restore (Disaster Recovery)
-      </button>
-      <button class="m3-button btn-tonal" onclick="fetchStatus()">
-        <span class="material-symbols-outlined">refresh</span> Refresh Status
-      </button>
-    </div>
-
-    <!-- ARTIFACTS TABLE -->
-    <div class="m3-card">
-      <span class="stat-label">Disaster Recovery Packages ({target_dir})</span>
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Filename</th>
-            <th>Archive Size</th>
-            <th style="text-align: right;">Action</th>
-          </tr>
-        </thead>
-        <tbody id="table-artifacts">
-          <tr><td colspan="3" style="text-align: center; color: var(--md-on-surface-variant);">Scanning storage directory...</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- CONSOLE LOG -->
-    <div class="m3-card">
-      <div style="display: flex; align-items: center; justify-content: space-between;">
-        <span class="stat-label">Live Execution Console</span>
-        <button class="m3-button btn-tonal" style="height: 30px; padding: 0 0.85rem; font-size: 0.78rem;" onclick="copyConsoleLog()">
-          <span class="material-symbols-outlined" style="font-size: 15px;">content_copy</span> Copy Log
-        </button>
-      </div>
-      <pre class="console-box" id="console-output">Loading daemon buffer...</pre>
-    </div>
-
-  </div>
-
-  <!-- MODAL: INTERACTIVE SETTINGS POPUP WITH TABS -->
-  <div class="dialog-overlay" id="config-modal">
-    <div class="m3-dialog">
-      <div class="dialog-header">
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
-          <span class="material-symbols-outlined" style="color: var(--md-primary);">tune</span>
-          <h2 style="font-family: 'Google Sans', sans-serif; font-size: 1.25rem;">Suite Configuration</h2>
+        <div class="card-title">
+          <span class="material-symbols-outlined" style="color: var(--google-blue);">play_circle</span>
+          On-Demand Full Disk Backup
         </div>
-        <span class="material-symbols-outlined" style="cursor: pointer;" onclick="closeConfigModal()">close</span>
-      </div>
+        <p style="font-size: 0.9rem; color: var(--md-on-surface-variant);">
+          Triggers a live raw block clone of your boot drive directly to <b id="display-target-dir">{target_dir}</b>. SQLite write-ahead transactions are cleanly checkpointed and trimmed prior to streaming.
+        </p>
 
-      <div class="dialog-tabs">
-        <button class="tab-btn active" id="tab-btn-storage" onclick="switchConfigTab('storage')">
-          <span class="material-symbols-outlined" style="font-size: 18px;">storage</span> Source &amp; Destination
-        </button>
-        <button class="tab-btn" id="tab-btn-schedule" onclick="switchConfigTab('schedule')">
-          <span class="material-symbols-outlined" style="font-size: 18px;">calendar_month</span> Schedule &amp; Retention
-        </button>
-        <button class="tab-btn" id="tab-btn-cloud" onclick="switchConfigTab('cloud')">
-          <span class="material-symbols-outlined" style="font-size: 18px;">cloud_sync</span> Rclone 3-2-1 Sync
-        </button>
-        <button class="tab-btn" id="tab-btn-alerts" onclick="switchConfigTab('alerts')">
-          <span class="material-symbols-outlined" style="font-size: 18px;">notifications</span> Alerts &amp; Safety
-        </button>
-      </div>
-
-      <div class="dialog-body">
-
-        <!-- TAB 1: STORAGE & DRIVES -->
-        <div id="tab-content-storage" style="display: flex; flex-direction: column; gap: 1.25rem;">
-          <div class="form-group">
-            <label class="form-label">
-              <span class="material-symbols-outlined" style="font-size: 18px;">dns</span> Source Storage Drive
-            </label>
-            <p class="form-desc">Select the physical storage drive to clone. We inspect all block devices connected to your system:</p>
-            <div class="drive-cards-grid" id="drive-cards-container">
-              <div class="drive-card selected" onclick="selectDrive('auto')">
-                <div>
-                  <div style="font-weight: 500;">auto - Automatic Detection (Recommended)</div>
-                  <div style="font-size: 0.78rem; color: var(--md-on-surface-variant);">Dynamically resolves the active OS boot disk</div>
-                </div>
-                <span class="material-symbols-outlined" style="color: var(--google-green);">auto_awesome</span>
-              </div>
-            </div>
-            <input type="hidden" id="cfg-source-dev" value="{cfg['source_dev']}">
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">
-              <span class="material-symbols-outlined" style="font-size: 18px;">folder</span> Target Storage Directory
-            </label>
-            <p class="form-desc">Destination SMB mount or local directory. Must have at least 15 GB free space.</p>
-            <div style="display: flex; gap: 0.6rem;">
-              <input type="text" class="form-input" style="flex: 1;" id="cfg-target-dir" value="{cfg['target_dir']}">
-              <button class="m3-button btn-tonal" onclick="probeDirectory()">Test Access</button>
-            </div>
-            <div id="dir-probe-result" style="font-size: 0.8rem; display: none;"></div>
-          </div>
+        <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 0.25rem;">
+          <button class="m3-button btn-filled" id="btn-run-backup" onclick="triggerAction('backup')">
+            <span class="material-symbols-outlined">play_arrow</span> Start Backup Now
+          </button>
+          <span id="backup-status-text" style="font-size: 0.9rem; font-weight: 500;">Status: Idle</span>
         </div>
 
-        <!-- TAB 2: SCHEDULE & RETENTION -->
-        <div id="tab-content-schedule" style="display: none; flex-direction: column; gap: 1.25rem;">
-          <div class="form-group">
-            <label class="form-label"><span class="material-symbols-outlined" style="font-size: 18px;">schedule</span> Backup Frequency</label>
-            <select class="form-select" id="cfg-sched-freq" onchange="handleFrequencyChange(this.value)">
+        <div class="progress-bar-container" id="global-progress">
+          <div class="progress-bar-fill" id="global-progress-fill"></div>
+        </div>
+      </div>
+
+      <div class="m3-card">
+        <div class="card-title">
+          <span class="material-symbols-outlined" style="color: var(--google-green);">folder_zip</span>
+          Available Backup Packages &amp; Recovery Scripts
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Artifact Filename</th>
+              <th>Size</th>
+              <th style="text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="table-artifacts">
+            <tr><td colspan="3" style="text-align: center; color: var(--md-on-surface-variant);">Scanning target storage...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB 2: STORAGE & SCHEDULE CONFIGURATION -->
+    <div id="tab-content-config" style="display: none; flex-direction: column; gap: 1.5rem;">
+      
+      <!-- ACTIVE SMB / CIFS NETWORK SHARES -->
+      <div class="m3-card">
+        <div class="card-title">
+          <span class="material-symbols-outlined" style="color: var(--google-green);">cloud_done</span>
+          Detected Host SMB / CIFS Network Shares
+        </div>
+        <p style="font-size: 0.88rem; color: var(--md-on-surface-variant);">
+          The following remote storage shares are actively mounted to Home Assistant OS. Click on any detected network share to designate it as your backup destination:
+        </p>
+        <div class="selection-grid" id="smb-mounts-list">
+          <div style="color: var(--md-on-surface-variant); font-size: 0.85rem;">Scanning active network mounts...</div>
+        </div>
+      </div>
+
+      <!-- SOURCE DRIVE DETECTION -->
+      <div class="m3-card">
+        <div class="card-title">
+          <span class="material-symbols-outlined" style="color: var(--google-blue);">hard_drive_2</span>
+          Source Storage Drive Selection
+        </div>
+        <p style="font-size: 0.88rem; color: var(--md-on-surface-variant);">
+          Select which disk device is cloned. We automatically inspect hardware bus topologies connected to the host:
+        </p>
+        <div class="selection-grid" id="drive-list"></div>
+        <input type="hidden" id="cfg-source-dev" value="{cfg['source_dev']}">
+      </div>
+
+      <!-- TARGET DIRECTORY & PROBE -->
+      <div class="m3-card">
+        <div class="card-title">
+          <span class="material-symbols-outlined" style="color: var(--google-blue);">folder</span>
+          Target Storage Path (SMB Mount or Local Directory)
+        </div>
+        <p style="font-size: 0.88rem; color: var(--md-on-surface-variant);">
+          Local mount point for your backups. You can edit this directly or select from the detected SMB shares above.
+        </p>
+        <div style="display: flex; gap: 0.75rem;">
+          <input type="text" class="form-input" style="flex: 1;" id="cfg-target-dir" value="{cfg['target_dir']}">
+          <button class="m3-button btn-tonal" onclick="probeDirectory()">Test Writable Access</button>
+        </div>
+        <div id="probe-msg" style="font-size: 0.85rem; display: none;"></div>
+      </div>
+
+      <!-- SCHEDULE & RETENTION -->
+      <div class="m3-card">
+        <div class="card-title">
+          <span class="material-symbols-outlined" style="color: var(--google-blue);">calendar_month</span>
+          Automated Schedule &amp; Retention Policy
+        </div>
+
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 220px;">
+            <label style="font-size: 0.85rem; font-weight: 500;">Recurrence</label>
+            <select class="form-select" style="width: 100%; margin-top: 0.35rem;" id="cfg-sched-freq" onchange="handleFrequencyChange(this.value)">
               <option value="weekly">Weekly on Selected Days</option>
               <option value="daily">Daily at Fixed Time</option>
               <option value="monthly">Monthly (1st Day of Month)</option>
-              <option value="custom">Advanced (Custom Cron String)</option>
+              <option value="custom">Advanced (Custom Cron Syntax)</option>
             </select>
           </div>
 
-          <div id="visual-sched-controls">
-            <div class="form-group">
-              <label class="form-label">Run Time (24h Clock)</label>
-              <div style="display: flex; gap: 0.5rem; max-width: 260px;">
-                <select class="form-select" id="cfg-sched-hour" style="flex: 1;"></select>
-                <span style="align-self: center; font-weight: bold;">:</span>
-                <select class="form-select" id="cfg-sched-min" style="flex: 1;">
+          <div id="time-picker-block" style="display: flex; gap: 0.5rem; align-items: flex-end;">
+            <div>
+              <label style="font-size: 0.85rem; font-weight: 500;">Run Time (24h Clock)</label>
+              <div style="display: flex; gap: 0.35rem; margin-top: 0.35rem;">
+                <select class="form-select" id="cfg-sched-hour"></select>
+                <select class="form-select" id="cfg-sched-min">
                   <option value="00">00</option>
                   <option value="15">15</option>
                   <option value="30">30</option>
@@ -611,242 +457,220 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
                 </select>
               </div>
             </div>
-
-            <div class="form-group" id="group-sched-days" style="margin-top: 0.5rem;">
-              <label class="form-label">Days of Week</label>
-              <div class="filter-chip-group">
-                <div class="filter-chip" data-day="0" onclick="toggleDayChip(this)">Sun</div>
-                <div class="filter-chip" data-day="1" onclick="toggleDayChip(this)">Mon</div>
-                <div class="filter-chip" data-day="2" onclick="toggleDayChip(this)">Tue</div>
-                <div class="filter-chip" data-day="3" onclick="toggleDayChip(this)">Wed</div>
-                <div class="filter-chip" data-day="4" onclick="toggleDayChip(this)">Thu</div>
-                <div class="filter-chip" data-day="5" onclick="toggleDayChip(this)">Fri</div>
-                <div class="filter-chip" data-day="6" onclick="toggleDayChip(this)">Sat</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="form-group" id="group-custom-cron" style="display: none;">
-            <label class="form-label">Raw Cron Expression</label>
-            <input type="text" class="form-input" id="cfg-backup-cron" value="{cfg['backup_cron']}">
-          </div>
-
-          <div class="form-group" style="margin-top: 0.5rem;">
-            <label class="form-label">
-              <span class="material-symbols-outlined" style="font-size: 18px;">history</span> Retention Count
-            </label>
-            <div style="display: flex; align-items: center; gap: 1rem;">
-              <input type="range" id="cfg-retention" min="1" max="15" value="{cfg['retention_count']}" style="flex: 1;" oninput="document.getElementById('retention-display').innerText = this.value">
-              <span id="retention-display" style="font-size: 1.25rem; font-weight: 600; min-width: 30px;">{cfg['retention_count']}</span>
-            </div>
-            <p class="form-desc">Older <span class="code-pill">.img.gz</span>, SHA256 hashes, logs, and companion restore tools are safely removed beyond this limit.</p>
           </div>
         </div>
 
-        <!-- TAB 3: CLOUD REPLICATION (RCLONE) -->
-        <div id="tab-content-cloud" style="display: none; flex-direction: column; gap: 1.25rem;">
-          <div class="guide-box">
-            <b>Rclone 3-2-1 Cloud Replication:</b> Maintain an immutable off-site copy of your Home Assistant OS disk images. 
-            Mount your <span class="code-pill">rclone.conf</span> in <span class="code-pill">/config/rclone/</span> to push snapshots directly to Backblaze B2, Google Drive, OneDrive, or AWS S3.
-          </div>
-
-          <div class="form-group">
-            <div style="display: flex; align-items: center; gap: 0.65rem;">
-              <input type="checkbox" id="cfg-rclone-enabled" {"checked" if cfg['rclone_sync_enabled'] else ""} style="width: 18px; height: 18px;">
-              <label for="cfg-rclone-enabled" style="font-size: 0.95rem; font-weight: 500;">Enable automated offsite cloud sync</label>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Rclone Remote Target</label>
-            <input type="text" class="form-input" id="cfg-rclone-target" placeholder="e.g. b2:my-haos-bucket/backups or gdrive:Backups" value="{cfg['rclone_remote_target']}">
-            <p class="form-desc">Format: <span class="code-pill">RemoteName:Path/To/Folder</span></p>
+        <div id="days-chip-block" style="margin-top: 0.5rem;">
+          <label style="font-size: 0.85rem; font-weight: 500;">Days of Week</label>
+          <div class="filter-chip-group">
+            <div class="filter-chip" data-day="0" onclick="toggleChip(this)">Sun</div>
+            <div class="filter-chip" data-day="1" onclick="toggleChip(this)">Mon</div>
+            <div class="filter-chip" data-day="2" onclick="toggleChip(this)">Tue</div>
+            <div class="filter-chip" data-day="3" onclick="toggleChip(this)">Wed</div>
+            <div class="filter-chip" data-day="4" onclick="toggleChip(this)">Thu</div>
+            <div class="filter-chip" data-day="5" onclick="toggleChip(this)">Fri</div>
+            <div class="filter-chip" data-day="6" onclick="toggleChip(this)">Sat</div>
           </div>
         </div>
 
-        <!-- TAB 4: ALERTS & SAFETY -->
-        <div id="tab-content-alerts" style="display: none; flex-direction: column; gap: 1.25rem;">
-          <div class="form-group">
-            <label class="form-label">Flash Wear Alert Threshold (%)</label>
-            <div style="display: flex; align-items: center; gap: 1rem;">
-              <input type="range" id="cfg-wear-thresh" min="50" max="95" value="{cfg['safe_wear_threshold']}" style="flex: 1;" oninput="document.getElementById('wear-display').innerText = this.value + '%'">
-              <span id="wear-display" style="font-size: 1.2rem; font-weight: 600; min-width: 50px;">{cfg['safe_wear_threshold']}%</span>
-            </div>
-            <p class="form-desc">Triggers notifications and persistent dashboard warnings when storage reserve blocks deplete.</p>
-          </div>
+        <div id="custom-cron-block" style="display: none; margin-top: 0.5rem;">
+          <label style="font-size: 0.85rem; font-weight: 500;">Cron String</label>
+          <input type="text" class="form-input" style="width: 100%; margin-top: 0.35rem;" id="cfg-backup-cron" value="{cfg['backup_cron']}">
+        </div>
 
-          <div class="form-group">
-            <div style="display: flex; align-items: center; gap: 0.65rem;">
-              <input type="checkbox" id="cfg-rescue-mode" {"checked" if cfg['enable_rescue'] else ""} style="width: 18px; height: 18px;">
-              <label for="cfg-rescue-mode" style="font-size: 0.95rem; font-weight: 500;">Enable Bad-Sector Rescue Guard (conv=noerror,sync)</label>
-            </div>
-            <p class="form-desc">Prevents aborting on read errors if the physical flash cells have developed bad blocks.</p>
+        <div style="margin-top: 0.5rem;">
+          <label style="font-size: 0.85rem; font-weight: 500;">Retention Count (Keep Last N Backups)</label>
+          <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.35rem;">
+            <input type="range" id="cfg-retention" min="1" max="15" value="{cfg['retention_count']}" style="flex: 1;" oninput="document.getElementById('ret-val').innerText = this.value">
+            <span id="ret-val" style="font-size: 1.25rem; font-weight: bold; min-width: 30px;">{cfg['retention_count']}</span>
           </div>
         </div>
 
-      </div>
-
-      <div class="dialog-footer">
-        <button class="m3-button btn-tonal" onclick="closeConfigModal()">Cancel</button>
-        <button class="m3-button btn-filled" onclick="commitSuiteConfiguration()">Save &amp; Apply</button>
+        <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
+          <button class="m3-button btn-filled" onclick="saveConfiguration()">
+            <span class="material-symbols-outlined">save</span> Save Configuration
+          </button>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- MODAL: DISASTER RECOVERY GUIDE -->
-  <div class="dialog-overlay" id="recovery-guide-modal">
-    <div class="m3-dialog">
-      <div class="dialog-header">
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
-          <span class="material-symbols-outlined" style="color: var(--md-primary);">menu_book</span>
-          <h2 style="font-family: 'Google Sans', sans-serif; font-size: 1.25rem;">Disaster Recovery Guide</h2>
+    <!-- TAB 3: WEAR HEALTH & LOGS -->
+    <div id="tab-content-health" style="display: none; flex-direction: column; gap: 1.5rem;">
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
+        <div class="m3-card">
+          <span style="font-size: 0.8rem; text-transform: uppercase; color: var(--md-on-surface-variant);">Flash Memory Wear</span>
+          <div style="font-size: 1.7rem; font-weight: bold; color: var(--google-yellow);" id="val-wear">--%</div>
+          <span style="font-size: 0.8rem; color: var(--md-on-surface-variant);">Warning Limit: {cfg['safe_wear_threshold']}%</span>
         </div>
-        <span class="material-symbols-outlined" style="cursor: pointer;" onclick="closeRecoveryGuideModal()">close</span>
-      </div>
-      <div class="dialog-body">
-        <div class="guide-box">
-          <b>Zero Manual Resizing Required:</b> Every backup generates automated companion recovery tools (<span class="code-pill">restore.sh</span> and <span class="code-pill">restore.ps1</span>). They check checksums, dismount existing volumes, write raw disk blocks, relocate backup GPT structures to the end of the physical media, and expand Partition 8 to 100% card capacity.
+        <div class="m3-card">
+          <span style="font-size: 0.8rem; text-transform: uppercase; color: var(--md-on-surface-variant);">JEDEC Health State</span>
+          <div style="font-size: 1.7rem; font-weight: bold; color: var(--google-green);" id="val-health">--</div>
+          <span style="font-size: 0.8rem; color: var(--md-on-surface-variant);">Reserve Blocks Normal</span>
         </div>
-
-        <h3 style="font-size: 1.05rem; color: var(--google-blue); margin-top: 0.25rem;">Restoring on Linux / OpenMediaVault</h3>
-        <p class="form-desc">Insert the replacement microSD or SSD into your Linux or OMV machine and run:</p>
-        <pre class="console-box" style="padding: 0.85rem;">sudo ./restore_YYYY-MM-DD_HH-MM-SS.sh /dev/sdX</pre>
-        <p class="form-desc">The script verifies image integrity, flashes sectors with parallel decompression, executes <span class="code-pill">partprobe</span>, and auto-resizes <span class="code-pill">hassos-data</span> with <span class="code-pill">resize2fs</span>.</p>
-
-        <h3 style="font-size: 1.05rem; color: var(--google-yellow); margin-top: 0.5rem;">Restoring on Windows Terminal (PowerShell)</h3>
-        <p class="form-desc">Launch Windows Terminal as Administrator, navigate to your backup folder, and run:</p>
-        <pre class="console-box" style="padding: 0.85rem;">Set-ExecutionPolicy Bypass -Scope Process
-.\restore_YYYY-MM-DD_HH-MM-SS.ps1</pre>
-        <p class="form-desc">Select your target USB disk number from the detected list. The script strips Windows drive letters to avoid Win32 access locks and streams the raw disk.</p>
       </div>
-      <div class="dialog-footer">
-        <button class="m3-button btn-filled" onclick="closeRecoveryGuideModal()">Close Guide</button>
+
+      <div class="m3-card">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div class="card-title">
+            <span class="material-symbols-outlined" style="color: var(--google-blue);">terminal</span>
+            Execution Log Stream
+          </div>
+          <button class="m3-button btn-tonal" style="height: 32px; font-size: 0.8rem;" onclick="copyConsoleLog()">
+            <span class="material-symbols-outlined" style="font-size: 16px;">content_copy</span> Copy Log
+          </button>
+        </div>
+        <pre class="console-box" id="console-output">Loading log stream...</pre>
       </div>
     </div>
+
   </div>
 
-  <!-- MODAL: CONFIRMATION PROMPT -->
-  <div class="dialog-overlay" id="confirm-modal">
-    <div class="m3-dialog" style="max-width: 460px;">
-      <div class="dialog-header">
-        <h2 style="font-family: 'Google Sans', sans-serif; font-size: 1.2rem;">Start Live Disk Backup?</h2>
-        <span class="material-symbols-outlined" style="cursor: pointer;" onclick="closeConfirmationModal()">close</span>
-      </div>
-      <div class="dialog-body">
-        <p style="font-size: 0.9rem; color: var(--md-on-surface-variant); line-height: 1.45;">
-          This initiates an immediate sector clone to your storage folder. SQLite transactions will be safely checkpointed and trimmed before disk streaming begins.
-        </p>
-      </div>
-      <div class="dialog-footer">
-        <button class="m3-button btn-tonal" onclick="closeConfirmationModal()">Cancel</button>
-        <button class="m3-button btn-filled" onclick="executeConfirmedBackup()">Confirm &amp; Run</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="toast-msg" id="toast"></div>
+  <div class="toast" id="toast-msg"></div>
 
   <script>
     const basePath = "{ingress_path}";
 
     function showToast(msg) {{
-      const t = document.getElementById("toast");
+      const t = document.getElementById("toast-msg");
       t.innerText = msg;
       t.style.display = "block";
       setTimeout(() => {{ t.style.display = "none"; }}, 3500);
     }}
 
-    function openConfigModal() {{
-      fetchDisks();
-      initScheduleControls();
-      document.getElementById('config-modal').style.display = 'flex';
-    }}
-    function closeConfigModal() {{ document.getElementById('config-modal').style.display = 'none'; }}
-
-    function openRecoveryGuideModal() {{ document.getElementById('recovery-guide-modal').style.display = 'flex'; }}
-    function closeRecoveryGuideModal() {{ document.getElementById('recovery-guide-modal').style.display = 'none'; }}
-
-    function openConfirmationModal() {{ document.getElementById('confirm-modal').style.display = 'flex'; }}
-    function closeConfirmationModal() {{ document.getElementById('confirm-modal').style.display = 'none'; }}
-
-    function executeConfirmedBackup() {{
-      closeConfirmationModal();
-      triggerAction('backup');
-    }}
-
-    function switchConfigTab(tabName) {{
-      ['storage', 'schedule', 'cloud', 'alerts'].forEach(t => {{
-        document.getElementById('tab-btn-' + t).className = (t === tabName ? 'tab-btn active' : 'tab-btn');
-        document.getElementById('tab-content-' + t).style.display = (t === tabName ? 'flex' : 'none');
+    function switchMainTab(tab) {{
+      ['backups', 'config', 'health'].forEach(t => {{
+        document.getElementById('tab-btn-' + t).className = (t === tab ? 'nav-tab active' : 'nav-tab');
+        document.getElementById('tab-content-' + t).style.display = (t === tab ? 'flex' : 'none');
       }});
+      if (tab === 'config') {{
+        fetchNetworkMounts();
+        fetchDisks();
+        initSchedulePickers();
+      }}
+    }}
+
+    async function fetchNetworkMounts() {{
+      const container = document.getElementById("smb-mounts-list");
+      try {{
+        const res = await fetch(basePath + "/api/system/network-mounts");
+        const data = await res.json();
+        const curTarget = document.getElementById("cfg-target-dir").value.trim();
+
+        if (!data.mounts || data.mounts.length === 0) {{
+          container.innerHTML = `
+            <div class="selectable-card" style="cursor: default;">
+              <div>
+                <div style="font-weight: 500;">No Remote SMB / CIFS Shares Mounted</div>
+                <div style="font-size: 0.8rem; color: var(--md-on-surface-variant); margin-top: 0.2rem;">
+                  To mount a remote share, go to <b>Settings &gt; System &gt; Storage &gt; Add Network Storage</b> in Home Assistant.
+                </div>
+              </div>
+              <span class="material-symbols-outlined" style="color: var(--md-outline);">info</span>
+            </div>
+          `;
+          return;
+        }}
+
+        let html = "";
+        data.mounts.forEach(m => {{
+          const isSelected = (curTarget === m.target);
+          html += `
+            <div class="selectable-card ${{isSelected ? 'selected' : ''}}" onclick="setTargetDir('${{m.target}}')">
+              <div>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                  <span style="font-weight: 600; font-size: 0.95rem;">${{m.source}}</span>
+                  <span class="badge badge-cifs">${{m.fstype}}</span>
+                </div>
+                <div style="font-size: 0.8rem; color: var(--md-on-surface-variant); margin-top: 0.25rem;">
+                  Mount Target: <code style="color: var(--md-primary);">${{m.target}}</code> &bull; Free Space: ${{m.free}}
+                </div>
+              </div>
+              <span class="material-symbols-outlined" style="color: ${{isSelected ? 'var(--google-green)' : 'var(--md-primary)'}};">
+                ${{isSelected ? 'check_circle' : 'cloud_sync'}}
+              </span>
+            </div>
+          `;
+        }});
+        container.innerHTML = html;
+      }} catch (e) {{
+        container.innerHTML = `<div style="color: var(--google-red); font-size: 0.85rem;">Failed to query network mounts.</div>`;
+      }}
+    }}
+
+    function setTargetDir(path) {{
+      document.getElementById("cfg-target-dir").value = path;
+      document.getElementById("display-target-dir").innerText = path;
+      fetchNetworkMounts();
+      probeDirectory();
+      showToast("Selected SMB mount: " + path);
     }}
 
     async function fetchDisks() {{
       try {{
         const res = await fetch(basePath + "/api/system/disks");
         const data = await res.json();
-        const container = document.getElementById("drive-cards-container");
-        const curDev = document.getElementById("cfg-source-dev").value;
+        const container = document.getElementById("drive-list");
+        const cur = document.getElementById("cfg-source-dev").value;
 
-        let cardsHtml = `
-          <div class="drive-card ${{curDev === 'auto' ? 'selected' : ''}}" onclick="selectDrive('auto')">
+        let html = `
+          <div class="selectable-card ${{cur === 'auto' ? 'selected' : ''}}" onclick="setDrive('auto')">
             <div>
               <div style="font-weight: 500;">auto - Automatic Detection (Recommended)</div>
-              <div style="font-size: 0.78rem; color: var(--md-on-surface-variant);">Dynamically resolves the root boot disk</div>
+              <div style="font-size: 0.8rem; color: var(--md-on-surface-variant);">Dynamically resolves the active OS boot disk</div>
             </div>
             <span class="material-symbols-outlined" style="color: var(--google-green);">auto_awesome</span>
           </div>
         `;
 
         data.disks.forEach(d => {{
-          const isSel = (curDev === d.path);
-          cardsHtml += `
-            <div class="drive-card ${{isSel ? 'selected' : ''}}" onclick="selectDrive('${{d.path}}')">
+          const isSel = (cur === d.path);
+          html += `
+            <div class="selectable-card ${{isSel ? 'selected' : ''}}" onclick="setDrive('${{d.path}}')">
               <div>
                 <div style="font-weight: 500;">${{d.path}} (${{d.size}})</div>
-                <div style="font-size: 0.78rem; color: var(--md-on-surface-variant);">${{d.model}} &bull; Bus: ${{d.tran}} &bull; ${{d.rota ? 'HDD' : 'Flash/SSD'}}</div>
+                <div style="font-size: 0.8rem; color: var(--md-on-surface-variant);">${{d.model}} &bull; Bus: ${{d.tran}} &bull; ${{d.rota ? 'HDD' : 'Flash/SSD'}}</div>
               </div>
-              <span class="material-symbols-outlined" style="color: var(--md-primary);">memory</span>
+              <span class="material-symbols-outlined" style="color: var(--md-primary);">dns</span>
             </div>
           `;
         }});
-        container.innerHTML = cardsHtml;
+        container.innerHTML = html;
       }} catch (e) {{
-        console.warn("Could not query disk list", e);
+        console.error("Could not fetch disks", e);
       }}
     }}
 
-    function selectDrive(path) {{
+    function setDrive(path) {{
       document.getElementById("cfg-source-dev").value = path;
       fetchDisks();
     }}
 
-    function initScheduleControls() {{
+    function initSchedulePickers() {{
       const hourSelect = document.getElementById("cfg-sched-hour");
       if (hourSelect.children.length === 0) {{
         for (let i = 0; i < 24; i++) {{
-          const val = (i < 10 ? '0' + i : '' + i);
+          const v = (i < 10 ? '0' + i : '' + i);
           const opt = document.createElement("option");
-          opt.value = val;
-          opt.innerText = val + ":00";
+          opt.value = v;
+          opt.innerText = v + ":00";
           hourSelect.appendChild(opt);
         }}
       }}
 
-      const curCron = document.getElementById("cfg-backup-cron").value.trim().split(/\\s+/);
-      if (curCron.length === 5) {{
-        document.getElementById("cfg-sched-min").value = curCron[0].padStart(2, '0');
-        document.getElementById("cfg-sched-hour").value = curCron[1].padStart(2, '0');
+      const cronParts = document.getElementById("cfg-backup-cron").value.trim().split(/\\s+/);
+      if (cronParts.length === 5) {{
+        document.getElementById("cfg-sched-min").value = cronParts[0].padStart(2, '0');
+        document.getElementById("cfg-sched-hour").value = cronParts[1].padStart(2, '0');
 
-        if (curCron[2] === '*' && curCron[3] === '*' && curCron[4] !== '*') {{
+        if (cronParts[2] === '*' && cronParts[3] === '*' && cronParts[4] !== '*') {{
           document.getElementById("cfg-sched-freq").value = "weekly";
-          const days = curCron[4].split(",");
-          document.querySelectorAll(".filter-chip").forEach(chip => {{
-            chip.className = days.includes(chip.getAttribute("data-day")) ? "filter-chip active" : "filter-chip";
+          const days = cronParts[4].split(",");
+          document.querySelectorAll(".filter-chip").forEach(c => {{
+            c.className = days.includes(c.getAttribute("data-day")) ? "filter-chip active" : "filter-chip";
           }});
-        }} else if (curCron[2] === '*' && curCron[3] === '*' && curCron[4] === '*') {{
+        }} else if (cronParts[2] === '*' && cronParts[3] === '*' && cronParts[4] === '*') {{
           document.getElementById("cfg-sched-freq").value = "daily";
-        }} else if (curCron[2] === '1' && curCron[3] === '*' && curCron[4] === '*') {{
+        }} else if (cronParts[2] === '1' && cronParts[3] === '*' && cronParts[4] === '*') {{
           document.getElementById("cfg-sched-freq").value = "monthly";
         }} else {{
           document.getElementById("cfg-sched-freq").value = "custom";
@@ -856,22 +680,13 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
     }}
 
     function handleFrequencyChange(val) {{
-      const visualControls = document.getElementById("visual-sched-controls");
-      const customControls = document.getElementById("group-custom-cron");
-      const daysGroup = document.getElementById("group-sched-days");
-
-      if (val === 'custom') {{
-        visualControls.style.display = 'none';
-        customControls.style.display = 'flex';
-      }} else {{
-        visualControls.style.display = 'block';
-        customControls.style.display = 'none';
-        daysGroup.style.display = (val === 'weekly' ? 'flex' : 'none');
-      }}
+      document.getElementById("time-picker-block").style.display = (val === 'custom' ? 'none' : 'flex');
+      document.getElementById("days-chip-block").style.display = (val === 'weekly' ? 'block' : 'none');
+      document.getElementById("custom-cron-block").style.display = (val === 'custom' ? 'block' : 'none');
       compileCron();
     }}
 
-    function toggleDayChip(chip) {{
+    function toggleChip(chip) {{
       chip.classList.toggle("active");
       compileCron();
     }}
@@ -885,11 +700,9 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
 
       let cron = `${{parseInt(min, 10)}} ${{parseInt(hr, 10)}} * * *`;
       if (freq === 'weekly') {{
-        const activeDays = [];
-        document.querySelectorAll(".filter-chip.active").forEach(c => {{
-          activeDays.push(c.getAttribute("data-day"));
-        }});
-        cron = `${{parseInt(min, 10)}} ${{parseInt(hr, 10)}} * * ${{activeDays.length > 0 ? activeDays.join(",") : "0"}}`;
+        const active = [];
+        document.querySelectorAll(".filter-chip.active").forEach(c => active.push(c.getAttribute("data-day")));
+        cron = `${{parseInt(min, 10)}} ${{parseInt(hr, 10)}} * * ${{active.length > 0 ? active.join(",") : "0"}}`;
       }} else if (freq === 'monthly') {{
         cron = `${{parseInt(min, 10)}} ${{parseInt(hr, 10)}} 1 * *`;
       }}
@@ -898,9 +711,9 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
 
     async function probeDirectory() {{
       const dir = document.getElementById("cfg-target-dir").value;
-      const resEl = document.getElementById("dir-probe-result");
+      const resEl = document.getElementById("probe-msg");
       resEl.style.display = "block";
-      resEl.innerText = "Probing storage mount...";
+      resEl.innerText = "Probing directory write access...";
 
       try {{
         const res = await fetch(basePath + "/api/system/probe?dir=" + encodeURIComponent(dir));
@@ -909,21 +722,17 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
         resEl.innerText = data.message;
       }} catch (e) {{
         resEl.style.color = "var(--google-red)";
-        resEl.innerText = "Error contacting directory probe service.";
+        resEl.innerText = "Directory probe request failed.";
       }}
     }}
 
-    async function commitSuiteConfiguration() {{
+    async function saveConfiguration() {{
       compileCron();
       const payload = {{
         source_dev: document.getElementById("cfg-source-dev").value,
         target_dir: document.getElementById("cfg-target-dir").value,
         retention_count: parseInt(document.getElementById("cfg-retention").value, 10),
-        safe_wear_threshold: parseInt(document.getElementById("cfg-wear-thresh").value, 10),
-        enable_rescue: document.getElementById("cfg-rescue-mode").checked,
-        backup_cron: document.getElementById("cfg-backup-cron").value,
-        rclone_sync_enabled: document.getElementById("cfg-rclone-enabled").checked,
-        rclone_remote_target: document.getElementById("cfg-rclone-target").value
+        backup_cron: document.getElementById("cfg-backup-cron").value
       }};
 
       try {{
@@ -933,21 +742,18 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
           body: JSON.stringify(payload)
         }});
         const data = await res.json();
-        closeConfigModal();
-        showToast(data.message || "Settings updated successfully.");
-        setTimeout(() => location.reload(), 1500);
+        showToast(data.message || "Settings updated.");
       }} catch (e) {{
-        alert("Failed to commit settings.");
+        alert("Failed to save configuration settings.");
       }}
     }}
 
-    function copyToClipboard(text) {{
-      navigator.clipboard.writeText(text).then(() => showToast("Hash copied to clipboard."));
+    function copyConsoleLog() {{
+      navigator.clipboard.writeText(document.getElementById("console-output").innerText).then(() => showToast("Log copied."));
     }}
 
-    function copyConsoleLog() {{
-      const text = document.getElementById("console-output").innerText;
-      navigator.clipboard.writeText(text).then(() => showToast("Log copied to clipboard."));
+    function copyText(val) {{
+      navigator.clipboard.writeText(val).then(() => showToast("Copied to clipboard."));
     }}
 
     async function fetchStatus() {{
@@ -955,19 +761,20 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
         const res = await fetch(basePath + "/api/status");
         const data = await res.json();
 
-        document.getElementById("val-status").innerText = data.status;
-        document.getElementById("sub-status").innerText = data.status === "Running" ? "Streaming Disk Sectors..." : "Daemon Monitoring";
+        document.getElementById("backup-status-text").innerText = "Status: " + data.status;
         document.getElementById("val-wear").innerText = data.wear;
         document.getElementById("val-health").innerText = data.health;
-        document.getElementById("console-output").innerText = data.log || "No log transactions recorded.";
+        document.getElementById("console-output").innerText = data.log || "No log transactions.";
 
         const pBar = document.getElementById("global-progress");
         const pFill = document.getElementById("global-progress-fill");
         if (data.status === "Running") {{
           pBar.style.display = "block";
           pFill.style.width = data.progress;
+          document.getElementById("btn-run-backup").disabled = true;
         }} else {{
           pBar.style.display = "none";
+          document.getElementById("btn-run-backup").disabled = false;
         }}
 
         const tbody = document.getElementById("table-artifacts");
@@ -975,9 +782,9 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
         if (data.artifacts && data.artifacts.length > 0) {{
           data.artifacts.forEach(item => {{
             const row = document.createElement("tr");
-            let actionHtml = `<a href="${{basePath}}/api/download?file=${{encodeURIComponent(item.name)}}" class="m3-button btn-tonal" style="height: 30px; padding: 0 0.85rem; text-decoration: none; font-size: 0.78rem;">Download</a>`;
+            let actionHtml = `<a href="${{basePath}}/api/download?file=${{encodeURIComponent(item.name)}}" class="m3-button btn-tonal" style="height: 28px; padding: 0 0.75rem; text-decoration: none; font-size: 0.75rem;">Download</a>`;
             if (item.name.endsWith(".sha256")) {{
-              actionHtml += ` <button class="m3-button btn-tonal" style="height: 30px; padding: 0 0.55rem;" onclick="copyToClipboard('${{item.hash || item.name}}')"><span class="material-symbols-outlined" style="font-size: 15px;">content_copy</span></button>`;
+              actionHtml += ` <button class="m3-button btn-tonal" style="height: 28px; padding: 0 0.5rem;" onclick="copyText('${{item.hash || item.name}}')"><span class="material-symbols-outlined" style="font-size: 14px;">content_copy</span></button>`;
             }}
             row.innerHTML = `
               <td style="font-family: monospace;">${{item.name}}</td>
@@ -987,21 +794,21 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
             tbody.appendChild(row);
           }});
         }} else {{
-          tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--md-on-surface-variant);">No backup packages found in target directory.</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--md-on-surface-variant);">No backup packages found in destination directory.</td></tr>`;
         }}
       }} catch (e) {{
         console.error("Status polling failed", e);
       }}
     }}
 
-    async function triggerAction(endpoint) {{
+    async function triggerAction(action) {{
       try {{
-        const res = await fetch(basePath + "/api/" + endpoint, {{ method: "POST" }});
-        const resp = await res.json();
-        showToast(resp.message);
-        setTimeout(fetchStatus, 1500);
+        const res = await fetch(basePath + "/api/" + action, {{ method: "POST" }});
+        const data = await res.json();
+        showToast(data.message);
+        setTimeout(fetchStatus, 1000);
       }} catch (e) {{
-        alert("Action dispatch failed.");
+        alert("Action failed.");
       }}
     }}
 
@@ -1011,6 +818,34 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
 </body>
 </html>"""
             self.wfile.write(html.encode("utf-8"))
+            return
+
+        elif path == "/api/system/network-mounts":
+            mounts = []
+            try:
+                with open("/proc/mounts", "r") as f:
+                    for line in f:
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            src = parts[0].replace("\\040", " ")
+                            target = parts[1].replace("\\040", " ")
+                            fstype = parts[2].lower()
+                            if fstype in ["cifs", "smb3", "nfs", "nfs4"] or src.startswith("//"):
+                                free_str = "Unknown"
+                                try:
+                                    total, used, free = shutil.disk_usage(target)
+                                    free_str = f"{free / 1073741824:.1f} GB free"
+                                except Exception:
+                                    pass
+                                mounts.append({
+                                    "source": src,
+                                    "target": target,
+                                    "fstype": fstype.upper(),
+                                    "free": free_str
+                                })
+            except Exception:
+                pass
+            self.send_json({"mounts": mounts})
             return
 
         elif path == "/api/system/disks":
@@ -1050,9 +885,7 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
                     f.write("test")
                 os.remove(probe_file)
                 total, used, free = shutil.disk_usage(target)
-                self.send_json({
-                    "message": f"✔ Reachable & Writable. Free capacity: {free / 1073741824:.2f} GB."
-                })
+                self.send_json({"message": f"✔ Reachable & Writable. Free capacity: {free / 1073741824:.2f} GB."})
             except Exception as ex:
                 self.send_json({"message": f"✖ Write failed on '{target}': {str(ex)}"}, status=500)
             return
@@ -1163,17 +996,17 @@ class EnterpriseMaterialHandler(BaseHTTPRequestHandler):
                 self.send_json({"message": "A backup process is already actively executing."}, status=409)
                 return
             subprocess.Popen(["/run.sh", "--backup"])
-            self.send_json({"message": "Disk backup process successfully triggered in background."})
+            self.send_json({"message": "Disk backup process successfully started in background."})
             return
 
         elif path == "/api/wear":
             subprocess.Popen(["/run.sh", "--wear"])
-            self.send_json({"message": "Flash wear diagnostic dispatched to Home Assistant."})
+            self.send_json({"message": "Flash wear diagnostic dispatched."})
             return
 
         self.send_response(404)
         self.end_headers()
 
 if __name__ == "__main__":
-    server = HTTPServer(("0.0.0.0", PORT), EnterpriseMaterialHandler)
+    server = HTTPServer(("0.0.0.0", PORT), WebDashboardHandler)
     server.serve_forever()
