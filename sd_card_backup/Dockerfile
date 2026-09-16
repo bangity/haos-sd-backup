@@ -10,8 +10,7 @@ RUN apk update && apk add --no-cache \
     coreutils \
     sqlite \
     parted \
-    gdisk \
-    wipefs \
+    gptfdisk \
     jq \
     python3 \
     tzdata \
