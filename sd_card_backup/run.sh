@@ -67,7 +67,6 @@ get_wear_metrics() {
     local wear_val="N/A"
     local status="Unsupported"
 
-    # 1. Check eMMC JEDEC JESD84-B50 registers (eMMC 5.0+)
     if [[ -f "$life_file" ]]; then
         local raw_hex dec_val
         raw_hex=$(awk '{print $1}' "$life_file" 2>/dev/null || echo "0x00")
@@ -91,12 +90,9 @@ get_wear_metrics() {
         fi
     fi
 
-    # 2. Check S.M.A.R.T. via smartctl (NVMe, SATA, and UAS USB SSDs)
     if [[ "$wear_val" == "N/A" ]] && command -v smartctl &>/dev/null && [[ -b "$SOURCE_DEV" ]]; then
         local smart_output
         smart_output=$(smartctl -A "$SOURCE_DEV" 2>/dev/null || smartctl -a "$SOURCE_DEV" 2>/dev/null || true)
-
-        # Check NVMe Percentage Used
         local nvme_pct
         nvme_pct=$(echo "$smart_output" | grep -i "Percentage Used:" | head -n1 | awk '{print $3}' | tr -d '%' || true)
         if [[ "$nvme_pct" =~ ^[0-9]+$ ]]; then
@@ -104,7 +100,6 @@ get_wear_metrics() {
             status="NVMe Flash Health OK"
         fi
 
-        # Check SATA SSD wear attributes (Wear_Leveling_Count or Remaining_Lifetime_Perc)
         if [[ "$wear_val" == "N/A" ]]; then
             local attr_val
             attr_val=$(echo "$smart_output" | grep -E -i "Wear_Leveling_Count|Remaining_Lifetime_Perc|SSD_Life_Left" | head -n1 | awk '{print $4}' || true)
@@ -115,7 +110,6 @@ get_wear_metrics() {
         fi
     fi
 
-    # 3. Fallback for consumer MicroSD cards (calculate lifetime written traffic)
     if [[ "$wear_val" == "N/A" ]]; then
         local stat_file="/sys/block/${dev_name}/stat"
         if [[ -f "$stat_file" ]]; then
@@ -125,7 +119,7 @@ get_wear_metrics() {
                 local gb_written
                 gb_written=$(awk "BEGIN {printf \"%.1f\", $sectors_written * 512 / 1073741824}")
                 wear_val="N/A*"
-                status="MicroSD lacks hardware wear register (${gb_written} GB written this boot)"
+                status="MicroSD: no hw wear registers (${gb_written} GB written this boot)"
             else
                 status="MicroSD (Hardware wear registers not supported)"
             fi
@@ -270,7 +264,6 @@ generate_restore_scripts() {
     local linux_script="${base_dir}/restore_${timestamp}.sh"
     local win_script="${base_dir}/restore_${timestamp}.ps1"
 
-    # --- LINUX RESTORE UTILITY ---
     cat << 'EOF' > "$linux_script"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -371,7 +364,6 @@ EOF
     sed -i "s|PLACEHOLDER_MIN_HUMAN|${min_human}|g" "$linux_script"
     chmod +x "$linux_script"
 
-    # --- WINDOWS POWERSHELL RESTORE UTILITY ---
     cat << 'EOF' > "$win_script"
 param([Parameter(Mandatory=$false)][int]$DiskNumber)
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -461,7 +453,7 @@ EOF
 run_wear_diagnostic() {
     resolve_storage_device
     IFS="|" read -r wear_val status_str < <(get_wear_metrics)
-    echo "[*] Storage Wear: ${wear_val}% (Status: ${status_str})"
+    echo "[*] Storage Wear: ${wear_val} (Status: ${status_str})"
     update_ha_sensor "sensor.sd_card_wear_estimate" "${wear_val}" "Storage Wear Level" "mdi:harddisk"
     update_ha_sensor "sensor.sd_card_health_status" "$status_str" "Storage Health Status" "mdi:heart-pulse"
 

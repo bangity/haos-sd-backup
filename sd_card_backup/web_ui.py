@@ -48,7 +48,6 @@ def save_config(new_opts):
     with open(OPTIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
 
-    # Sync to Supervisor options
     token = os.environ.get("SUPERVISOR_TOKEN")
     if token:
         try:
@@ -63,6 +62,17 @@ def save_config(new_opts):
         except Exception:
             pass
     return cfg
+
+def get_mount_stats(target_path):
+    """Calculates disk capacity, checking host mount bindings if necessary."""
+    try:
+        if os.path.exists(target_path):
+            total, used, free = shutil.disk_usage(target_path)
+            pct_used = int((used / total) * 100) if total > 0 else 0
+            return total, used, free, pct_used
+    except Exception:
+        pass
+    return 0, 0, 0, 0
 
 class WebDashboardHandler(BaseHTTPRequestHandler):
     def send_json(self, data, status=200):
@@ -254,16 +264,16 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
 
     .meter-bar {{
       width: 100%;
-      height: 6px;
+      height: 8px;
       background: var(--md-surface-container-highest);
-      border-radius: 3px;
-      margin-top: 0.5rem;
+      border-radius: 4px;
+      margin-top: 0.6rem;
       overflow: hidden;
     }}
     .meter-bar-fill {{
       height: 100%;
       background: var(--google-green);
-      border-radius: 3px;
+      border-radius: 4px;
     }}
 
     .form-input, .form-select {{
@@ -361,10 +371,9 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         </div>
         <div class="hero-subtitle">Production sector-level disk replication, flash wear analytics, and disaster recovery</div>
       </div>
-      <span style="font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 0.4rem 0.8rem; border-radius: 12px;">v1.5.0</span>
+      <span style="font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 0.4rem 0.8rem; border-radius: 12px;">v1.6.0</span>
     </div>
 
-    <!-- MAIN APP NAVIGATION -->
     <div class="nav-tabs">
       <button class="nav-tab active" id="tab-btn-backups" onclick="switchMainTab('backups')">
         <span class="material-symbols-outlined">backup</span> Backups &amp; Execution
@@ -473,7 +482,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         <input type="hidden" id="cfg-source-dev" value="{cfg['source_dev']}">
       </div>
 
-      <!-- RCLONE 3-2-1 CLOUD REPLICATION (RESTORED) -->
+      <!-- RCLONE 3-2-1 CLOUD REPLICATION -->
       <div class="m3-card">
         <div class="card-title">
           <span class="material-symbols-outlined" style="color: var(--google-yellow);">cloud_sync</span>
@@ -563,7 +572,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       </div>
     </div>
 
-    <!-- TAB 3: WEAR HEALTH & LOGS -->
+    <!-- TAB 3: HEALTH & LOGS -->
     <div id="tab-content-health" style="display: none; flex-direction: column; gap: 1.5rem;">
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
         <div class="m3-card">
@@ -573,8 +582,8 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         </div>
         <div class="m3-card">
           <span style="font-size: 0.8rem; text-transform: uppercase; color: var(--md-on-surface-variant);">Hardware Diagnostics</span>
-          <div style="font-size: 1.1rem; font-weight: 600; color: var(--google-green);" id="val-health">--</div>
-          <span style="font-size: 0.8rem; color: var(--md-on-surface-variant);" id="sub-health">Lifetime Telemetry</span>
+          <div style="font-size: 1.05rem; font-weight: 600; color: var(--google-green);" id="val-health">--</div>
+          <span style="font-size: 0.8rem; color: var(--md-on-surface-variant);">Real-Time Storage Telemetry</span>
         </div>
       </div>
 
@@ -647,7 +656,6 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         data.targets.forEach(m => {{
           const isSelected = (curTarget === m.path);
 
-          // Populate Quick Dropdown
           const opt = document.createElement("option");
           opt.value = m.path;
           opt.innerText = `${{m.name}} (${{m.type}}) - ${{m.free}}`;
@@ -665,7 +673,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                   ${{m.is_default ? '<span class="badge" style="background: rgba(66, 133, 244, 0.2); color: var(--google-blue);">Default</span>' : ''}}
                 </div>
                 <div style="margin-top: 0.35rem; font-family: monospace; font-size: 0.92rem; color: #8AB4F8;">
-                  Full Path: <b>${{m.source}}</b>
+                  Full Remote Path: <b>${{m.source}}</b>
                 </div>
                 <div style="margin-top: 0.25rem; font-size: 0.82rem; color: var(--md-on-surface-variant);">
                   Mount Folder: <code style="color: #FFFFFF; background: #0E0F12; padding: 0.15rem 0.4rem; border-radius: 4px;">${{m.path}}</code> &bull; ${{m.free}}
@@ -940,7 +948,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
             seen_paths = set()
             token = os.environ.get("SUPERVISOR_TOKEN")
 
-            # 1. Inspect Supervisor mounts API (Requires hassio_role: manager)
+            # 1. Query Supervisor mounts API
             if token:
                 try:
                     req = urllib.request.Request(
@@ -959,71 +967,69 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                                 m_share = rm.get("share", "")
                                 m_type = rm.get("type", "cifs").upper()
                                 full_remote = f"//{m_server}/{m_share}" if (m_server and m_share) else m_name
-                                target_path = "/backup" if (m_usage == "backup" or m_name == default_backup) else f"/share/{m_name}"
 
-                                free_str = "Unknown"
-                                pct_used = 0
-                                try:
-                                    if os.path.exists(target_path):
-                                        total, used, free = shutil.disk_usage(target_path)
-                                        pct_used = int((used / total) * 100) if total > 0 else 0
-                                        free_str = f"{used / 1073741824:.1f} GB of {total / 1073741824:.1f} GB used ({free / 1073741824:.1f} GB free)"
-                                except Exception:
-                                    pass
+                                candidate_paths = []
+                                if m_usage == "backup" or m_name == default_backup:
+                                    candidate_paths = ["/backup", f"/share/{m_name}", f"/media/{m_name}"]
+                                else:
+                                    candidate_paths = [f"/share/{m_name}", f"/media/{m_name}", "/backup"]
 
-                                seen_paths.add(target_path)
+                                chosen_path = candidate_paths[0]
+                                best_total, best_used, best_free, best_pct = 0, 0, 0, 0
+                                for cp in candidate_paths:
+                                    tot, usd, fre, pct = get_mount_stats(cp)
+                                    # If space exceeds SD card rootfs (~32GB), it's the external drive
+                                    if tot > 35 * 1073741824:
+                                        chosen_path = cp
+                                        best_total, best_used, best_free, best_pct = tot, usd, fre, pct
+                                        break
+                                    elif tot > best_total:
+                                        chosen_path = cp
+                                        best_total, best_used, best_free, best_pct = tot, usd, fre, pct
+
+                                free_str = f"{best_used / 1073741824:.1f} GB of {best_total / 1073741824:.1f} GB used ({best_free / 1073741824:.1f} GB free)" if best_total > 0 else "Ready"
+
+                                seen_paths.add(chosen_path)
                                 targets.append({
                                     "name": m_name,
                                     "source": full_remote,
-                                    "path": target_path,
+                                    "path": chosen_path,
                                     "type": f"SMB / {m_type}",
                                     "free": free_str,
-                                    "pct_used": pct_used,
+                                    "pct_used": best_pct,
                                     "is_default": (m_name == default_backup or m_usage == "backup")
                                 })
                 except Exception as ex:
                     print(f"[!] Supervisor /mounts exception: {ex}", file=sys.stderr)
 
-            # 2. Inspect /backup geometry difference (Fallback for CIFS bind-mount)
+            # 2. Check /backup directory geometry
             if "/backup" not in seen_paths and os.path.exists("/backup"):
-                try:
-                    total, used, free = shutil.disk_usage("/backup")
-                    total_gb = total / 1073741824
-                    free_gb = free / 1073741824
-                    used_gb = used / 1073741824
-                    pct_used = int((used / total) * 100) if total > 0 else 0
+                tot, usd, fre, pct = get_mount_stats("/backup")
+                targets.append({
+                    "name": "Pi4HomeAssistant (Host Network Storage)",
+                    "source": "//192.168.0.190/Backups_Pi4HA",
+                    "path": "/backup",
+                    "type": "SMB / CIFS",
+                    "free": f"{usd / 1073741824:.1f} GB of {tot / 1073741824:.1f} GB used ({fre / 1073741824:.1f} GB free)",
+                    "pct_used": pct,
+                    "is_default": True
+                })
+                seen_paths.add("/backup")
 
-                    targets.append({
-                        "name": "Pi4HomeAssistant (Network Storage)",
-                        "source": "//192.168.0.190/Backups_Pi4HA",
-                        "path": "/backup",
-                        "type": "SMB / CIFS",
-                        "free": f"{used_gb:.1f} GB of {total_gb:.1f} GB used ({free_gb:.1f} GB free)",
-                        "pct_used": pct_used,
-                        "is_default": True
-                    })
-                    seen_paths.add("/backup")
-                except Exception:
-                    pass
-
-            # 3. Detect attached USB drives and local mounts under /media
+            # 3. Detect USB storage devices under /media
             if os.path.exists("/media"):
                 try:
                     for entry in os.listdir("/media"):
                         usb_path = os.path.join("/media", entry)
                         if os.path.isdir(usb_path) and usb_path not in seen_paths:
-                            total, used, free = shutil.disk_usage(usb_path)
-                            total_gb = total / 1073741824
-                            free_gb = free / 1073741824
-                            used_gb = used / 1073741824
-                            pct_used = int((used / total) * 100) if total > 0 else 0
+                            tot, usd, fre, pct = get_mount_stats(usb_path)
                             targets.append({
                                 "name": f"USB Storage ({entry})",
                                 "source": f"/media/{entry}",
                                 "path": usb_path,
                                 "type": "USB Storage",
-                                "free": f"{used_gb:.1f} GB of {total_gb:.1f} GB used ({free_gb:.1f} GB free)",
-                                "pct_used": pct_used,
+                                "free": f"{usd / 1073741824:.1f} GB of {tot / 1073741824:.1f} GB used ({fre / 1073741824:.1f} GB free)",
+                                "pct_used": pct,
                                 "is_default": False
                             })
                             seen_paths.add(usb_path)
@@ -1084,7 +1090,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 with open(probe_file, "w") as f:
                     f.write("test")
                 os.remove(probe_file)
-                total, used, free = shutil.disk_usage(target)
+                total, used, free, pct = get_mount_stats(target)
                 self.send_json({"message": f"✔ Reachable & Writable. Free capacity: {free / 1073741824:.2f} GB."})
             except Exception as ex:
                 self.send_json({"message": f"✖ Write failed on '{target}': {str(ex)}"}, status=500)
