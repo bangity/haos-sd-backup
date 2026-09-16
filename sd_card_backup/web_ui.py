@@ -64,7 +64,16 @@ def save_config(new_opts):
     return cfg
 
 def get_mount_stats(target_path):
-    """Calculates disk capacity, checking host mount bindings if necessary."""
+    """Calculates disk capacity, prioritizing bridged network mounts."""
+    # Check if this target points to bridged network storage
+    if target_path == "/backup" and os.path.ismount("/mnt/smb_backup"):
+        try:
+            total, used, free = shutil.disk_usage("/mnt/smb_backup")
+            pct_used = int((used / total) * 100) if total > 0 else 0
+            return total, used, free, pct_used
+        except Exception:
+            pass
+
     try:
         if os.path.exists(target_path):
             total, used, free = shutil.disk_usage(target_path)
@@ -371,7 +380,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         </div>
         <div class="hero-subtitle">Production sector-level disk replication, flash wear analytics, and disaster recovery</div>
       </div>
-      <span style="font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 0.4rem 0.8rem; border-radius: 12px;">v1.6.0</span>
+      <span style="font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 0.4rem 0.8rem; border-radius: 12px;">v1.7.0</span>
     </div>
 
     <div class="nav-tabs">
@@ -394,7 +403,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
           On-Demand Full Disk Backup
         </div>
         <p style="font-size: 0.9rem; color: var(--md-on-surface-variant);">
-          Triggers a live raw block clone of your boot drive directly to <b id="display-target-dir">{target_dir}</b>. SQLite write-ahead transactions are cleanly checkpointed and trimmed prior to streaming.
+          Triggers a live raw block clone of your boot drive directly to <b id="display-target-dir">{target_dir}</b>. SQLite write-ahead transactions are checkpointed and trimmed prior to streaming.
         </p>
 
         <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 0.25rem;">
@@ -968,23 +977,24 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                                 m_type = rm.get("type", "cifs").upper()
                                 full_remote = f"//{m_server}/{m_share}" if (m_server and m_share) else m_name
 
-                                candidate_paths = []
-                                if m_usage == "backup" or m_name == default_backup:
-                                    candidate_paths = ["/backup", f"/share/{m_name}", f"/media/{m_name}"]
-                                else:
-                                    candidate_paths = [f"/share/{m_name}", f"/media/{m_name}", "/backup"]
+                                # Candidate paths inside container and bridged paths
+                                candidate_paths = [
+                                    "/mnt/smb_backup",
+                                    f"/proc/1/root/mnt/data/supervisor/mounts/{m_name}",
+                                    "/backup",
+                                    f"/share/{m_name}"
+                                ]
 
-                                chosen_path = candidate_paths[0]
+                                chosen_path = "/backup"
                                 best_total, best_used, best_free, best_pct = 0, 0, 0, 0
+
                                 for cp in candidate_paths:
                                     tot, usd, fre, pct = get_mount_stats(cp)
-                                    # If space exceeds SD card rootfs (~32GB), it's the external drive
+                                    # If disk size exceeds typical SD card size (35GB+), it's the external volume
                                     if tot > 35 * 1073741824:
-                                        chosen_path = cp
                                         best_total, best_used, best_free, best_pct = tot, usd, fre, pct
                                         break
                                     elif tot > best_total:
-                                        chosen_path = cp
                                         best_total, best_used, best_free, best_pct = tot, usd, fre, pct
 
                                 free_str = f"{best_used / 1073741824:.1f} GB of {best_total / 1073741824:.1f} GB used ({best_free / 1073741824:.1f} GB free)" if best_total > 0 else "Ready"
@@ -1002,8 +1012,8 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 except Exception as ex:
                     print(f"[!] Supervisor /mounts exception: {ex}", file=sys.stderr)
 
-            # 2. Check /backup directory geometry
-            if "/backup" not in seen_paths and os.path.exists("/backup"):
+            # 2. Check Bridged SMB Path Fallback
+            if "/backup" not in seen_paths:
                 tot, usd, fre, pct = get_mount_stats("/backup")
                 targets.append({
                     "name": "Pi4HomeAssistant (Host Network Storage)",

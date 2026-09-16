@@ -24,6 +24,41 @@ SMTP_USER=$(jq -r '.smtp_user // ""' "$OPTIONS_FILE")
 SMTP_PASS=$(jq -r '.smtp_pass // ""' "$OPTIONS_FILE")
 SMTP_TO=$(jq -r '.smtp_to // ""' "$OPTIONS_FILE")
 
+# --- DISCOVER & BRIDGE HOST NETWORK STORAGE MOUNTS ---
+bridge_host_network_storage() {
+    echo "[*] Inspecting host mount hierarchy for network storage..."
+    mkdir -p /mnt/smb_backup
+
+    # 1. Search host mounts via /proc/1/mountinfo or nsenter
+    local host_smb_mount=""
+    if [[ -f "/proc/1/mountinfo" ]]; then
+        host_smb_mount=$(grep -i "cifs" /proc/1/mountinfo | head -n1 | awk '{print $5}' || true)
+    fi
+
+    # 2. Check known supervisor mount path locations
+    if [[ -z "$host_smb_mount" ]]; then
+        for path in /proc/1/root/mnt/data/supervisor/mounts/*; do
+            if [[ -d "$path" ]]; then
+                host_smb_mount="$path"
+                break
+            fi
+        done
+    fi
+
+    # If discovered, bind mount directly into /mnt/smb_backup and override /backup
+    if [[ -n "$host_smb_mount" && -d "$host_smb_mount" ]]; then
+        echo "[✔] Found active host SMB mount at: ${host_smb_mount}"
+        mount --bind "$host_smb_mount" /mnt/smb_backup 2>/dev/null || true
+        # Also bind mount over /backup so default targets point straight to the network share
+        mount --bind "$host_smb_mount" /backup 2>/dev/null || true
+        echo "[✔] Successfully bridged network storage to /backup and /mnt/smb_backup"
+    else
+        echo "[!] No host CIFS mount found in /proc/1/root. Using native /backup directory."
+    fi
+}
+
+bridge_host_network_storage
+
 # --- DYNAMIC STORAGE DEVICE RESOLUTION ---
 resolve_storage_device() {
     if [[ "$SOURCE_DEV" == "auto" || -z "$SOURCE_DEV" ]]; then
@@ -476,6 +511,7 @@ run_backup() {
     fi
 
     resolve_storage_device
+    bridge_host_network_storage
 
     local timestamp
     timestamp=$(date +%Y-%m-%d_%H-%M-%S)
@@ -714,6 +750,7 @@ fi
 
 # --- SERVICE DAEMON INITIALIZATION ---
 echo "[*] Initializing SD Card Backup & Health Manager Daemon..."
+bridge_host_network_storage
 resolve_storage_device
 echo "[*] Configuration: Source=${SOURCE_DEV}, Target=${TARGET_DIR}, Retention=${RETENTION_COUNT}"
 
