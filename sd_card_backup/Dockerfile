@@ -14,7 +14,8 @@ RUN apk update && apk add --no-cache \
     jq \
     python3 \
     tzdata \
-    rclone
+    rclone \
+    smartmontools
 
 COPY run.sh /run.sh
 COPY web_ui.py /web_ui.py

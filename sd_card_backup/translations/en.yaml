@@ -3,8 +3,8 @@ configuration:
     name: "Source Storage Device"
     description: "The physical disk to clone. Select 'auto' to dynamically detect the boot drive (/dev/mmcblk0, /dev/sda, or /dev/nvme0n1)."
   target_dir:
-    name: "Target Backup Directory (SMB or Local)"
-    description: "Destination directory where compressed archives and recovery scripts will be stored."
+    name: "Target Backup Directory (SMB, USB, or Local)"
+    description: "Destination directory where compressed archives and recovery scripts will be stored (/backup, /media/USB_NAME, or /share)."
   retention_count:
     name: "Backup Retention Limit"
     description: "Number of complete backup cycles to keep before pruning older archives."

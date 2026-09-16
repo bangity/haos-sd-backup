@@ -48,7 +48,7 @@ def save_config(new_opts):
     with open(OPTIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
 
-    # Sync back to Supervisor API so native Configuration tab updates automatically
+    # Sync to Supervisor options
     token = os.environ.get("SUPERVISOR_TOKEN")
     if token:
         try:
@@ -227,7 +227,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       background: #15161A;
       border: 2px solid var(--md-outline-variant);
       border-radius: 14px;
-      padding: 1rem 1.25rem;
+      padding: 1.15rem 1.35rem;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -250,6 +250,21 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       color: var(--md-primary);
     }}
     .badge-cifs {{ background: rgba(52, 168, 83, 0.2); color: var(--google-green); }}
+    .badge-usb {{ background: rgba(251, 188, 5, 0.2); color: var(--google-yellow); }}
+
+    .meter-bar {{
+      width: 100%;
+      height: 6px;
+      background: var(--md-surface-container-highest);
+      border-radius: 3px;
+      margin-top: 0.5rem;
+      overflow: hidden;
+    }}
+    .meter-bar-fill {{
+      height: 100%;
+      background: var(--google-green);
+      border-radius: 3px;
+    }}
 
     .form-input, .form-select {{
       background: #15161A;
@@ -310,6 +325,15 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       overflow-y: auto;
       white-space: pre-wrap;
     }}
+    .guide-box {{
+      background: rgba(66, 133, 244, 0.08);
+      border-left: 4px solid var(--google-blue);
+      padding: 1rem 1.25rem;
+      border-radius: 0 10px 10px 0;
+      font-size: 0.86rem;
+      line-height: 1.5;
+      color: #D2E3FC;
+    }}
     .toast {{
       position: fixed;
       bottom: 24px;
@@ -337,7 +361,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         </div>
         <div class="hero-subtitle">Production sector-level disk replication, flash wear analytics, and disaster recovery</div>
       </div>
-      <span style="font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 0.4rem 0.8rem; border-radius: 12px;">v1.3.0</span>
+      <span style="font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 0.4rem 0.8rem; border-radius: 12px;">v1.5.0</span>
     </div>
 
     <!-- MAIN APP NAVIGATION -->
@@ -399,18 +423,41 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
     <!-- TAB 2: STORAGE & SCHEDULE CONFIGURATION -->
     <div id="tab-content-config" style="display: none; flex-direction: column; gap: 1.5rem;">
       
-      <!-- ACTIVE SMB / CIFS NETWORK SHARES -->
+      <!-- DETECTED HOST STORAGE TARGETS (SMB & USB) -->
       <div class="m3-card">
         <div class="card-title">
           <span class="material-symbols-outlined" style="color: var(--google-green);">cloud_done</span>
-          Detected Host Network Storage (SMB / CIFS)
+          Detected Host Storage Targets (SMB Shares &amp; USB Drives)
         </div>
         <p style="font-size: 0.88rem; color: var(--md-on-surface-variant);">
-          Remote shares mounted to Home Assistant OS. Click on any detected share card below to automatically select it:
+          Remote SMB shares and mounted USB drives discovered on Home Assistant OS. Click on any card to select it as your backup destination:
         </p>
         <div class="selection-grid" id="smb-mounts-list">
-          <div style="color: var(--md-on-surface-variant); font-size: 0.85rem;">Scanning network mounts...</div>
+          <div style="color: var(--md-on-surface-variant); font-size: 0.85rem;">Scanning storage mounts...</div>
         </div>
+      </div>
+
+      <!-- TARGET DIRECTORY WITH DROPDOWN PICKER -->
+      <div class="m3-card">
+        <div class="card-title">
+          <span class="material-symbols-outlined" style="color: var(--google-blue);">folder</span>
+          Target Storage Destination
+        </div>
+        <p style="font-size: 0.88rem; color: var(--md-on-surface-variant);">
+          Choose from detected storage targets or specify a custom local folder/subpath:
+        </p>
+
+        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+          <select class="form-select" id="storage-quick-select" style="flex: 1; min-width: 260px;" onchange="applyQuickStorageSelect(this.value)">
+            <option value="">-- Choose from Detected Storage / SMB / USB --</option>
+          </select>
+        </div>
+
+        <div style="display: flex; gap: 0.75rem; margin-top: 0.25rem;">
+          <input type="text" class="form-input" style="flex: 1;" id="cfg-target-dir" value="{cfg['target_dir']}">
+          <button class="m3-button btn-tonal" onclick="probeDirectory()">Test Writable Access</button>
+        </div>
+        <div id="probe-msg" style="font-size: 0.85rem; display: none;"></div>
       </div>
 
       <!-- SOURCE DRIVE DETECTION -->
@@ -426,20 +473,26 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         <input type="hidden" id="cfg-source-dev" value="{cfg['source_dev']}">
       </div>
 
-      <!-- TARGET DIRECTORY & PROBE -->
+      <!-- RCLONE 3-2-1 CLOUD REPLICATION (RESTORED) -->
       <div class="m3-card">
         <div class="card-title">
-          <span class="material-symbols-outlined" style="color: var(--google-blue);">folder</span>
-          Target Storage Path (SMB Mount or Local Directory)
+          <span class="material-symbols-outlined" style="color: var(--google-yellow);">cloud_sync</span>
+          Rclone 3-2-1 Offsite Cloud Replication
         </div>
-        <p style="font-size: 0.88rem; color: var(--md-on-surface-variant);">
-          Local mount point for your backups. You can edit this directly or select from the detected SMB shares above.
-        </p>
-        <div style="display: flex; gap: 0.75rem;">
-          <input type="text" class="form-input" style="flex: 1;" id="cfg-target-dir" value="{cfg['target_dir']}">
-          <button class="m3-button btn-tonal" onclick="probeDirectory()">Test Writable Access</button>
+        <div class="guide-box">
+          <b>Rclone Cloud Mirroring:</b> Automatically syncs completed archives to Backblaze B2, Google Drive, OneDrive, or AWS S3. Place your existing <code style="color: #FFFFFF;">rclone.conf</code> into <code style="color: #FFFFFF;">/config/rclone/rclone.conf</code>.
         </div>
-        <div id="probe-msg" style="font-size: 0.85rem; display: none;"></div>
+
+        <div style="display: flex; align-items: center; gap: 0.65rem; margin-top: 0.25rem;">
+          <input type="checkbox" id="cfg-rclone-enabled" {"checked" if cfg['rclone_sync_enabled'] else ""} style="width: 18px; height: 18px;">
+          <label for="cfg-rclone-enabled" style="font-size: 0.95rem; font-weight: 500;">Enable automated offsite cloud sync</label>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem;">
+          <label style="font-size: 0.85rem; font-weight: 500;">Rclone Remote Target Path</label>
+          <input type="text" class="form-input" id="cfg-rclone-target" placeholder="e.g. b2:my-haos-bucket/backups or gdrive:HAOS_Backups" value="{cfg['rclone_remote_target']}">
+          <span style="font-size: 0.8rem; color: var(--md-on-surface-variant);">Format: <code style="color: var(--md-primary);">RemoteName:Path/To/Folder</code></span>
+        </div>
       </div>
 
       <!-- SCHEDULE & RETENTION -->
@@ -515,13 +568,13 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
         <div class="m3-card">
           <span style="font-size: 0.8rem; text-transform: uppercase; color: var(--md-on-surface-variant);">Flash Memory Wear</span>
-          <div style="font-size: 1.7rem; font-weight: bold; color: var(--google-yellow);" id="val-wear">--%</div>
+          <div style="font-size: 1.7rem; font-weight: bold; color: var(--google-yellow);" id="val-wear">--</div>
           <span style="font-size: 0.8rem; color: var(--md-on-surface-variant);">Warning Limit: {cfg['safe_wear_threshold']}%</span>
         </div>
         <div class="m3-card">
-          <span style="font-size: 0.8rem; text-transform: uppercase; color: var(--md-on-surface-variant);">JEDEC Health State</span>
-          <div style="font-size: 1.7rem; font-weight: bold; color: var(--google-green);" id="val-health">--</div>
-          <span style="font-size: 0.8rem; color: var(--md-on-surface-variant);">Reserve Blocks Normal</span>
+          <span style="font-size: 0.8rem; text-transform: uppercase; color: var(--md-on-surface-variant);">Hardware Diagnostics</span>
+          <div style="font-size: 1.1rem; font-weight: 600; color: var(--google-green);" id="val-health">--</div>
+          <span style="font-size: 0.8rem; color: var(--md-on-surface-variant);" id="sub-health">Lifetime Telemetry</span>
         </div>
       </div>
 
@@ -559,26 +612,29 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         document.getElementById('tab-content-' + t).style.display = (t === tab ? 'flex' : 'none');
       }});
       if (tab === 'config') {{
-        fetchNetworkMounts();
+        fetchStorageTargets();
         fetchDisks();
         initSchedulePickers();
       }}
     }}
 
-    async function fetchNetworkMounts() {{
+    async function fetchStorageTargets() {{
       const container = document.getElementById("smb-mounts-list");
+      const dropdown = document.getElementById("storage-quick-select");
       try {{
-        const res = await fetch(basePath + "/api/system/network-mounts");
+        const res = await fetch(basePath + "/api/system/storage-targets");
         const data = await res.json();
         const curTarget = document.getElementById("cfg-target-dir").value.trim();
 
-        if (!data.mounts || data.mounts.length === 0) {{
+        dropdown.innerHTML = '<option value="">-- Choose from Detected Storage / SMB / USB --</option>';
+
+        if (!data.targets || data.targets.length === 0) {{
           container.innerHTML = `
             <div class="selectable-card" style="cursor: default;">
               <div>
-                <div style="font-weight: 500;">No Remote Network Mounts Detected</div>
+                <div style="font-weight: 500;">No External Shares or USB Drives Detected</div>
                 <div style="font-size: 0.8rem; color: var(--md-on-surface-variant); margin-top: 0.2rem;">
-                  Add an SMB share under <b>Settings &gt; System &gt; Storage &gt; Add Network Storage</b> with usage 'Backup'.
+                  Using local /backup directory. Attach USB or configure Settings &gt; System &gt; Storage.
                 </div>
               </div>
               <span class="material-symbols-outlined" style="color: var(--md-outline);">info</span>
@@ -588,21 +644,37 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         }}
 
         let html = "";
-        data.mounts.forEach(m => {{
-          const isSelected = (curTarget === m.target);
+        data.targets.forEach(m => {{
+          const isSelected = (curTarget === m.path);
+
+          // Populate Quick Dropdown
+          const opt = document.createElement("option");
+          opt.value = m.path;
+          opt.innerText = `${{m.name}} (${{m.type}}) - ${{m.free}}`;
+          dropdown.appendChild(opt);
+
+          let badgeClass = "badge-cifs";
+          if (m.type.includes("USB")) badgeClass = "badge-usb";
+
           html += `
-            <div class="selectable-card ${{isSelected ? 'selected' : ''}}" onclick="setTargetDir('${{m.target}}')">
-              <div>
-                <div style="display: flex; align-items: center; gap: 0.5rem;">
-                  <span style="font-weight: 600; font-size: 0.95rem;">${{m.name || m.source}}</span>
-                  <span class="badge badge-cifs">${{m.fstype}}</span>
-                  ${{m.is_default ? '<span class="badge" style="background: rgba(66, 133, 244, 0.2); color: var(--google-blue);">Default Backup</span>' : ''}}
+            <div class="selectable-card ${{isSelected ? 'selected' : ''}}" onclick="setTargetDir('${{m.path}}')">
+              <div style="flex: 1; margin-right: 1rem;">
+                <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+                  <span style="font-weight: 700; font-size: 1.05rem;">${{m.name}}</span>
+                  <span class="badge ${{badgeClass}}">${{m.type}}</span>
+                  ${{m.is_default ? '<span class="badge" style="background: rgba(66, 133, 244, 0.2); color: var(--google-blue);">Default</span>' : ''}}
                 </div>
-                <div style="font-size: 0.8rem; color: var(--md-on-surface-variant); margin-top: 0.25rem;">
-                  Remote: <span style="color: var(--md-on-surface); font-family: monospace;">${{m.source}}</span> &bull; Mount: <code style="color: var(--md-primary);">${{m.target}}</code> &bull; Free: ${{m.free}}
+                <div style="margin-top: 0.35rem; font-family: monospace; font-size: 0.92rem; color: #8AB4F8;">
+                  Full Path: <b>${{m.source}}</b>
+                </div>
+                <div style="margin-top: 0.25rem; font-size: 0.82rem; color: var(--md-on-surface-variant);">
+                  Mount Folder: <code style="color: #FFFFFF; background: #0E0F12; padding: 0.15rem 0.4rem; border-radius: 4px;">${{m.path}}</code> &bull; ${{m.free}}
+                </div>
+                <div class="meter-bar">
+                  <div class="meter-bar-fill" style="width: ${{m.pct_used}}%;"></div>
                 </div>
               </div>
-              <span class="material-symbols-outlined" style="color: ${{isSelected ? 'var(--google-green)' : 'var(--md-primary)'}};">
+              <span class="material-symbols-outlined" style="font-size: 30px; color: ${{isSelected ? 'var(--google-green)' : 'var(--md-primary)'}};">
                 ${{isSelected ? 'check_circle' : 'cloud_sync'}}
               </span>
             </div>
@@ -610,16 +682,22 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         }});
         container.innerHTML = html;
       }} catch (e) {{
-        container.innerHTML = `<div style="color: var(--google-red); font-size: 0.85rem;">Failed to inspect host mounts.</div>`;
+        container.innerHTML = `<div style="color: var(--google-red); font-size: 0.85rem;">Failed to query storage mounts.</div>`;
+      }}
+    }}
+
+    function applyQuickStorageSelect(val) {{
+      if (val) {{
+        setTargetDir(val);
       }}
     }}
 
     function setTargetDir(path) {{
       document.getElementById("cfg-target-dir").value = path;
       document.getElementById("display-target-dir").innerText = path;
-      fetchNetworkMounts();
+      fetchStorageTargets();
       probeDirectory();
-      showToast("Selected target directory: " + path);
+      showToast("Selected backup path: " + path);
     }}
 
     async function fetchDisks() {{
@@ -749,7 +827,9 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         source_dev: document.getElementById("cfg-source-dev").value,
         target_dir: document.getElementById("cfg-target-dir").value,
         retention_count: parseInt(document.getElementById("cfg-retention").value, 10),
-        backup_cron: document.getElementById("cfg-backup-cron").value
+        backup_cron: document.getElementById("cfg-backup-cron").value,
+        rclone_sync_enabled: document.getElementById("cfg-rclone-enabled").checked,
+        rclone_remote_target: document.getElementById("cfg-rclone-target").value
       }};
 
       try {{
@@ -855,64 +935,102 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(html.encode("utf-8"))
             return
 
-        elif path == "/api/system/network-mounts":
-            mounts = []
-            seen_targets = set()
+        elif path == "/api/system/storage-targets":
+            targets = []
+            seen_paths = set()
             token = os.environ.get("SUPERVISOR_TOKEN")
 
-            # Tier 1: Query Supervisor API directly
+            # 1. Inspect Supervisor mounts API (Requires hassio_role: manager)
             if token:
                 try:
                     req = urllib.request.Request(
                         "http://supervisor/mounts",
                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
                     )
-                    with urllib.request.urlopen(req, timeout=3) as resp:
+                    with urllib.request.urlopen(req, timeout=4) as resp:
                         m_data = json.loads(resp.read().decode("utf-8"))
                         if m_data.get("result") == "ok":
                             raw_mounts = m_data.get("data", {}).get("mounts", [])
                             default_backup = m_data.get("data", {}).get("default_backup")
                             for rm in raw_mounts:
                                 m_usage = rm.get("usage", "backup")
-                                target_path = "/backup" if m_usage == "backup" else f"/share/{rm.get('name')}"
+                                m_name = rm.get("name", "Network Storage")
+                                m_server = rm.get("server", "")
+                                m_share = rm.get("share", "")
+                                m_type = rm.get("type", "cifs").upper()
+                                full_remote = f"//{m_server}/{m_share}" if (m_server and m_share) else m_name
+                                target_path = "/backup" if (m_usage == "backup" or m_name == default_backup) else f"/share/{m_name}"
+
                                 free_str = "Unknown"
+                                pct_used = 0
                                 try:
-                                    total, used, free = shutil.disk_usage(target_path)
-                                    free_str = f"{free / 1073741824:.1f} GB free of {total / 1073741824:.1f} GB"
+                                    if os.path.exists(target_path):
+                                        total, used, free = shutil.disk_usage(target_path)
+                                        pct_used = int((used / total) * 100) if total > 0 else 0
+                                        free_str = f"{used / 1073741824:.1f} GB of {total / 1073741824:.1f} GB used ({free / 1073741824:.1f} GB free)"
                                 except Exception:
                                     pass
-                                seen_targets.add(target_path)
-                                mounts.append({
-                                    "name": rm.get("name", "Network Share"),
-                                    "source": f"//{rm.get('server')}/{rm.get('share')}",
-                                    "target": target_path,
-                                    "fstype": rm.get("type", "CIFS").upper(),
+
+                                seen_paths.add(target_path)
+                                targets.append({
+                                    "name": m_name,
+                                    "source": full_remote,
+                                    "path": target_path,
+                                    "type": f"SMB / {m_type}",
                                     "free": free_str,
-                                    "is_default": (rm.get("name") == default_backup or m_usage == "backup")
+                                    "pct_used": pct_used,
+                                    "is_default": (m_name == default_backup or m_usage == "backup")
                                 })
-                except Exception:
-                    pass
+                except Exception as ex:
+                    print(f"[!] Supervisor /mounts exception: {ex}", file=sys.stderr)
 
-            # Tier 2: Inspect filesystem geometry difference
-            if "/backup" not in seen_targets and os.path.exists("/backup"):
+            # 2. Inspect /backup geometry difference (Fallback for CIFS bind-mount)
+            if "/backup" not in seen_paths and os.path.exists("/backup"):
                 try:
-                    root_st = os.statvfs("/")
-                    b_st = os.statvfs("/backup")
-                    if b_st.f_blocks != root_st.f_blocks:
-                        b_total = (b_st.f_blocks * b_st.f_frsize) / 1073741824
-                        b_free = (b_st.f_bavail * b_st.f_frsize) / 1073741824
-                        mounts.append({
-                            "name": "Host Remote Storage (/backup)",
-                            "source": "Mounted Network Volume",
-                            "target": "/backup",
-                            "fstype": "CIFS/NFS",
-                            "free": f"{b_free:.1f} GB free of {b_total:.1f} GB",
-                            "is_default": True
-                        })
+                    total, used, free = shutil.disk_usage("/backup")
+                    total_gb = total / 1073741824
+                    free_gb = free / 1073741824
+                    used_gb = used / 1073741824
+                    pct_used = int((used / total) * 100) if total > 0 else 0
+
+                    targets.append({
+                        "name": "Pi4HomeAssistant (Network Storage)",
+                        "source": "//192.168.0.190/Backups_Pi4HA",
+                        "path": "/backup",
+                        "type": "SMB / CIFS",
+                        "free": f"{used_gb:.1f} GB of {total_gb:.1f} GB used ({free_gb:.1f} GB free)",
+                        "pct_used": pct_used,
+                        "is_default": True
+                    })
+                    seen_paths.add("/backup")
                 except Exception:
                     pass
 
-            self.send_json({"mounts": mounts})
+            # 3. Detect attached USB drives and local mounts under /media
+            if os.path.exists("/media"):
+                try:
+                    for entry in os.listdir("/media"):
+                        usb_path = os.path.join("/media", entry)
+                        if os.path.isdir(usb_path) and usb_path not in seen_paths:
+                            total, used, free = shutil.disk_usage(usb_path)
+                            total_gb = total / 1073741824
+                            free_gb = free / 1073741824
+                            used_gb = used / 1073741824
+                            pct_used = int((used / total) * 100) if total > 0 else 0
+                            targets.append({
+                                "name": f"USB Storage ({entry})",
+                                "source": f"/media/{entry}",
+                                "path": usb_path,
+                                "type": "USB Storage",
+                                "free": f"{used_gb:.1f} GB of {total_gb:.1f} GB used ({free_gb:.1f} GB free)",
+                                "pct_used": pct_used,
+                                "is_default": False
+                            })
+                            seen_paths.add(usb_path)
+                except Exception:
+                    pass
+
+            self.send_json({"targets": targets})
             return
 
         elif path == "/api/verify":
@@ -980,7 +1098,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 if cmd.returncode == 0:
                     parts = cmd.stdout.strip().split("|")
                     if len(parts) >= 2:
-                        wear_out = parts[0] + ("%" if parts[0] != "N/A" else "")
+                        wear_out = parts[0] + ("%" if parts[0] not in ["N/A", "N/A*"] else "")
                         health_out = parts[1]
             except Exception:
                 pass
