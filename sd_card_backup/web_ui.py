@@ -5,6 +5,7 @@ import json
 import subprocess
 import glob
 import shutil
+import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -46,6 +47,21 @@ def save_config(new_opts):
     os.makedirs(os.path.dirname(OPTIONS_FILE), exist_ok=True)
     with open(OPTIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
+
+    # Sync back to Supervisor API so native Configuration tab updates automatically
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if token:
+        try:
+            req = urllib.request.Request(
+                "http://supervisor/addons/self/options",
+                data=json.dumps({"options": cfg}).encode("utf-8"),
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=3):
+                pass
+        except Exception:
+            pass
     return cfg
 
 class WebDashboardHandler(BaseHTTPRequestHandler):
@@ -321,7 +337,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         </div>
         <div class="hero-subtitle">Production sector-level disk replication, flash wear analytics, and disaster recovery</div>
       </div>
-      <span style="font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 0.4rem 0.8rem; border-radius: 12px;">v1.2.0</span>
+      <span style="font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 0.4rem 0.8rem; border-radius: 12px;">v1.3.0</span>
     </div>
 
     <!-- MAIN APP NAVIGATION -->
@@ -387,13 +403,13 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       <div class="m3-card">
         <div class="card-title">
           <span class="material-symbols-outlined" style="color: var(--google-green);">cloud_done</span>
-          Detected Host SMB / CIFS Network Shares
+          Detected Host Network Storage (SMB / CIFS)
         </div>
         <p style="font-size: 0.88rem; color: var(--md-on-surface-variant);">
-          The following remote storage shares are actively mounted to Home Assistant OS. Click on any detected network share to designate it as your backup destination:
+          Remote shares mounted to Home Assistant OS. Click on any detected share card below to automatically select it:
         </p>
         <div class="selection-grid" id="smb-mounts-list">
-          <div style="color: var(--md-on-surface-variant); font-size: 0.85rem;">Scanning active network mounts...</div>
+          <div style="color: var(--md-on-surface-variant); font-size: 0.85rem;">Scanning network mounts...</div>
         </div>
       </div>
 
@@ -560,9 +576,9 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
           container.innerHTML = `
             <div class="selectable-card" style="cursor: default;">
               <div>
-                <div style="font-weight: 500;">No Remote SMB / CIFS Shares Mounted</div>
+                <div style="font-weight: 500;">No Remote Network Mounts Detected</div>
                 <div style="font-size: 0.8rem; color: var(--md-on-surface-variant); margin-top: 0.2rem;">
-                  To mount a remote share, go to <b>Settings &gt; System &gt; Storage &gt; Add Network Storage</b> in Home Assistant.
+                  Add an SMB share under <b>Settings &gt; System &gt; Storage &gt; Add Network Storage</b> with usage 'Backup'.
                 </div>
               </div>
               <span class="material-symbols-outlined" style="color: var(--md-outline);">info</span>
@@ -578,11 +594,12 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
             <div class="selectable-card ${{isSelected ? 'selected' : ''}}" onclick="setTargetDir('${{m.target}}')">
               <div>
                 <div style="display: flex; align-items: center; gap: 0.5rem;">
-                  <span style="font-weight: 600; font-size: 0.95rem;">${{m.source}}</span>
+                  <span style="font-weight: 600; font-size: 0.95rem;">${{m.name || m.source}}</span>
                   <span class="badge badge-cifs">${{m.fstype}}</span>
+                  ${{m.is_default ? '<span class="badge" style="background: rgba(66, 133, 244, 0.2); color: var(--google-blue);">Default Backup</span>' : ''}}
                 </div>
                 <div style="font-size: 0.8rem; color: var(--md-on-surface-variant); margin-top: 0.25rem;">
-                  Mount Target: <code style="color: var(--md-primary);">${{m.target}}</code> &bull; Free Space: ${{m.free}}
+                  Remote: <span style="color: var(--md-on-surface); font-family: monospace;">${{m.source}}</span> &bull; Mount: <code style="color: var(--md-primary);">${{m.target}}</code> &bull; Free: ${{m.free}}
                 </div>
               </div>
               <span class="material-symbols-outlined" style="color: ${{isSelected ? 'var(--google-green)' : 'var(--md-primary)'}};">
@@ -593,7 +610,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         }});
         container.innerHTML = html;
       }} catch (e) {{
-        container.innerHTML = `<div style="color: var(--google-red); font-size: 0.85rem;">Failed to query network mounts.</div>`;
+        container.innerHTML = `<div style="color: var(--google-red); font-size: 0.85rem;">Failed to inspect host mounts.</div>`;
       }}
     }}
 
@@ -602,7 +619,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       document.getElementById("display-target-dir").innerText = path;
       fetchNetworkMounts();
       probeDirectory();
-      showToast("Selected SMB mount: " + path);
+      showToast("Selected target directory: " + path);
     }}
 
     async function fetchDisks() {{
@@ -756,12 +773,27 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       navigator.clipboard.writeText(val).then(() => showToast("Copied to clipboard."));
     }}
 
+    async function verifyArchive(filename) {{
+      showToast("Testing archive integrity with pigz -t...");
+      try {{
+        const res = await fetch(basePath + "/api/verify?file=" + encodeURIComponent(filename));
+        const data = await res.json();
+        alert(data.message);
+      }} catch (e) {{
+        alert("Verification request failed.");
+      }}
+    }}
+
     async function fetchStatus() {{
       try {{
         const res = await fetch(basePath + "/api/status");
         const data = await res.json();
 
-        document.getElementById("backup-status-text").innerText = "Status: " + data.status;
+        let statusText = "Status: " + data.status;
+        if (data.status === "Running" && data.speed) {{
+          statusText = `Streaming: ${{data.progress}} (${{data.speed}} &bull; ETA: ${{data.eta}})`;
+        }}
+        document.getElementById("backup-status-text").innerHTML = statusText;
         document.getElementById("val-wear").innerText = data.wear;
         document.getElementById("val-health").innerText = data.health;
         document.getElementById("console-output").innerText = data.log || "No log transactions.";
@@ -783,6 +815,9 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
           data.artifacts.forEach(item => {{
             const row = document.createElement("tr");
             let actionHtml = `<a href="${{basePath}}/api/download?file=${{encodeURIComponent(item.name)}}" class="m3-button btn-tonal" style="height: 28px; padding: 0 0.75rem; text-decoration: none; font-size: 0.75rem;">Download</a>`;
+            if (item.name.endsWith(".img.gz")) {{
+              actionHtml += ` <button class="m3-button btn-tonal" style="height: 28px; padding: 0 0.65rem; font-size: 0.75rem;" onclick="verifyArchive('${{item.name}}')">Test Integrity</button>`;
+            }}
             if (item.name.endsWith(".sha256")) {{
               actionHtml += ` <button class="m3-button btn-tonal" style="height: 28px; padding: 0 0.5rem;" onclick="copyText('${{item.hash || item.name}}')"><span class="material-symbols-outlined" style="font-size: 14px;">content_copy</span></button>`;
             }}
@@ -822,30 +857,77 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/system/network-mounts":
             mounts = []
-            try:
-                with open("/proc/mounts", "r") as f:
-                    for line in f:
-                        parts = line.split()
-                        if len(parts) >= 3:
-                            src = parts[0].replace("\\040", " ")
-                            target = parts[1].replace("\\040", " ")
-                            fstype = parts[2].lower()
-                            if fstype in ["cifs", "smb3", "nfs", "nfs4"] or src.startswith("//"):
+            seen_targets = set()
+            token = os.environ.get("SUPERVISOR_TOKEN")
+
+            # Tier 1: Query Supervisor API directly
+            if token:
+                try:
+                    req = urllib.request.Request(
+                        "http://supervisor/mounts",
+                        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                    )
+                    with urllib.request.urlopen(req, timeout=3) as resp:
+                        m_data = json.loads(resp.read().decode("utf-8"))
+                        if m_data.get("result") == "ok":
+                            raw_mounts = m_data.get("data", {}).get("mounts", [])
+                            default_backup = m_data.get("data", {}).get("default_backup")
+                            for rm in raw_mounts:
+                                m_usage = rm.get("usage", "backup")
+                                target_path = "/backup" if m_usage == "backup" else f"/share/{rm.get('name')}"
                                 free_str = "Unknown"
                                 try:
-                                    total, used, free = shutil.disk_usage(target)
-                                    free_str = f"{free / 1073741824:.1f} GB free"
+                                    total, used, free = shutil.disk_usage(target_path)
+                                    free_str = f"{free / 1073741824:.1f} GB free of {total / 1073741824:.1f} GB"
                                 except Exception:
                                     pass
+                                seen_targets.add(target_path)
                                 mounts.append({
-                                    "source": src,
-                                    "target": target,
-                                    "fstype": fstype.upper(),
-                                    "free": free_str
+                                    "name": rm.get("name", "Network Share"),
+                                    "source": f"//{rm.get('server')}/{rm.get('share')}",
+                                    "target": target_path,
+                                    "fstype": rm.get("type", "CIFS").upper(),
+                                    "free": free_str,
+                                    "is_default": (rm.get("name") == default_backup or m_usage == "backup")
                                 })
-            except Exception:
-                pass
+                except Exception:
+                    pass
+
+            # Tier 2: Inspect filesystem geometry difference
+            if "/backup" not in seen_targets and os.path.exists("/backup"):
+                try:
+                    root_st = os.statvfs("/")
+                    b_st = os.statvfs("/backup")
+                    if b_st.f_blocks != root_st.f_blocks:
+                        b_total = (b_st.f_blocks * b_st.f_frsize) / 1073741824
+                        b_free = (b_st.f_bavail * b_st.f_frsize) / 1073741824
+                        mounts.append({
+                            "name": "Host Remote Storage (/backup)",
+                            "source": "Mounted Network Volume",
+                            "target": "/backup",
+                            "fstype": "CIFS/NFS",
+                            "free": f"{b_free:.1f} GB free of {b_total:.1f} GB",
+                            "is_default": True
+                        })
+                except Exception:
+                    pass
+
             self.send_json({"mounts": mounts})
+            return
+
+        elif path == "/api/verify":
+            qs = parse_qs(parsed.query)
+            filename = os.path.basename(qs.get("file", [""])[0])
+            full_path = os.path.join(target_dir, filename)
+            if not os.path.exists(full_path):
+                self.send_json({"message": "File does not exist."}, status=404)
+                return
+
+            cmd = subprocess.run(["pigz", "-t", full_path], capture_output=True, text=True)
+            if cmd.returncode == 0:
+                self.send_json({"message": f"✔ Verification Passed: {filename} integrity is 100% OK (no corruption detected)."})
+            else:
+                self.send_json({"message": f"✖ Corrupted archive! pigz -t failed: {cmd.stderr}"}, status=422)
             return
 
         elif path == "/api/system/disks":
@@ -930,19 +1012,28 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
 
             status_val = "Idle"
             prog_val = "0%"
+            speed_val = ""
+            eta_val = ""
             if os.path.exists("/var/run/sd_backup.lock"):
                 status_val = "Running"
                 prog_file = "/var/run/sd_backup.progress"
                 if os.path.exists(prog_file):
                     try:
                         with open(prog_file, "r") as pf:
-                            prog_val = pf.read().strip()
+                            p_parts = pf.read().strip().split("|")
+                            prog_val = p_parts[0]
+                            if len(p_parts) > 1:
+                                speed_val = p_parts[1]
+                            if len(p_parts) > 2:
+                                eta_val = p_parts[2]
                     except Exception:
                         pass
 
             self.send_json({
                 "status": status_val,
                 "progress": prog_val,
+                "speed": speed_val,
+                "eta": eta_val,
                 "wear": wear_out,
                 "health": health_out,
                 "artifacts": artifacts[:15],

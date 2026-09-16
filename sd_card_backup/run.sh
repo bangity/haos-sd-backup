@@ -157,7 +157,6 @@ send_email() {
     local subject="$1"
     local body="$2"
 
-    # Clean bypass if SMTP is disabled or any critical field is left blank
     if [[ "$SMTP_ENABLED" != "true" ]] || [[ -z "$SMTP_USER" ]] || [[ -z "$SMTP_TO" ]] || [[ -z "$SMTP_HOST" ]]; then
         return 0
     fi
@@ -408,7 +407,7 @@ try {
 Write-Host "`n[✔] Flashing complete! Drive restored." -ForegroundColor Green
 Write-Host "[!] NOTE: Windows cannot resize Linux ext4 partitions natively." -ForegroundColor Yellow
 Write-Host "    If your target drive is larger than the original image, boot a Linux live environment" -ForegroundColor Yellow
-Write-Host "    (or connect the drive to your OMV host) to expand Partition 8 to full capacity." -ForegroundColor Yellow
+Write-Host "    to expand Partition 8 to full capacity." -ForegroundColor Yellow
 Read-Host "Press Enter to exit..."
 EOF
     sed -i "s|PLACEHOLDER_ARCHIVE|${archive_name}|g" "$win_script"
@@ -464,7 +463,7 @@ run_backup() {
 
     update_ha_sensor "sensor.sd_card_backup_status" "Running" "SD Card Backup Status" "mdi:progress-clock"
     update_ha_sensor "sensor.sd_card_backup_progress" "0%" "SD Card Backup Progress" "mdi:percent"
-    echo "0%" > "$PROGRESS_FILE"
+    echo "0%|0.0 MB/s|Estimating..." > "$PROGRESS_FILE"
 
     echo "================================================================"
     echo " Starting Live Disk Backup: ${SOURCE_DEV} -> ${output_archive}"
@@ -532,8 +531,10 @@ EOF
 
     echo "[*] Streaming sectors through multi-core pigz (${pigz_threads} threads)..."
     (
+        local prev_pos=0
+        local prev_time=$(date +%s)
         while true; do
-            sleep 15
+            sleep 4
             local dd_pid
             dd_pid=$(pgrep -f "[d]d if=$SOURCE_DEV" | head -n 1 || true)
             if [[ -n "$dd_pid" ]] && [[ -d "/proc/$dd_pid/fd" ]]; then
@@ -548,9 +549,29 @@ EOF
                     local read_pos
                     read_pos=$(grep -m1 '^pos:' "/proc/$dd_pid/fdinfo/$fd_target" 2>/dev/null | awk '{print $2}' || echo 0)
                     if [[ "$read_pos" =~ ^[0-9]+$ ]] && (( read_pos > 0 )); then
+                        local now=$(date +%s)
+                        local dt=$(( now - prev_time ))
+                        (( dt < 1 )) && dt=1
+                        local dbytes=$(( read_pos - prev_pos ))
+                        local speed_bps=$(( dbytes / dt ))
+                        local speed_mb
+                        speed_mb=$(awk "BEGIN {printf \"%.1f\", $speed_bps/1048576}")
+                        prev_pos=$read_pos
+                        prev_time=$now
+
                         local pct=$(( read_pos * 100 / dev_bytes ))
                         (( pct > 99 )) && pct=99
-                        echo "${pct}%" > "$PROGRESS_FILE"
+
+                        local eta_str="calculating..."
+                        if (( speed_bps > 100000 )); then
+                            local rem_bytes=$(( dev_bytes - read_pos ))
+                            local rem_sec=$(( rem_bytes / speed_bps ))
+                            local rem_min=$(( rem_sec / 60 ))
+                            local rem_sec_mod=$(( rem_sec % 60 ))
+                            eta_str="${rem_min}m ${rem_sec_mod}s"
+                        fi
+
+                        echo "${pct}%|${speed_mb} MB/s|${eta_str}" > "$PROGRESS_FILE"
                         update_ha_sensor "sensor.sd_card_backup_progress" "${pct}%" "SD Card Backup Progress" "mdi:percent"
                     fi
                 fi
