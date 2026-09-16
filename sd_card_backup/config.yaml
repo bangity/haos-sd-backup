@@ -1,7 +1,7 @@
 name: "SD Card Raw Backup & Health Manager"
 slug: "sd_card_backup"
 description: "Live raw disk backup, multi-core pigz compression, wear diagnostics, Google Material Ingress Web UI, and disaster recovery generators."
-version: "1.0.0"
+version: "1.2.0"
 url: "https://github.com/bangity/haos-sd-backup"
 arch:
   - aarch64
@@ -37,7 +37,7 @@ options:
   rclone_sync_enabled: false
   rclone_remote_target: ""
   smtp_enabled: false
-  smtp_host: "smtp.gmail.com"
+  smtp_host: ""
   smtp_port: 587
   smtp_user: ""
   smtp_pass: ""
@@ -58,4 +58,4 @@ schema:
   smtp_port: int?
   smtp_user: str?
   smtp_pass: password?
-  smtp_to: email?
+  smtp_to: str?

@@ -157,7 +157,8 @@ send_email() {
     local subject="$1"
     local body="$2"
 
-    if [[ "$SMTP_ENABLED" != "true" ]] || [[ -z "$SMTP_USER" ]]; then
+    # Clean bypass if SMTP is disabled or any critical field is left blank
+    if [[ "$SMTP_ENABLED" != "true" ]] || [[ -z "$SMTP_USER" ]] || [[ -z "$SMTP_TO" ]] || [[ -z "$SMTP_HOST" ]]; then
         return 0
     fi
 
