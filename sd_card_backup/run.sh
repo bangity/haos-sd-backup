@@ -644,6 +644,15 @@ if [[ "${1:-}" == "--wear-metrics" ]]; then
     exit 0
 fi
 
+if [[ "${1:-}" == "--update-cron" ]]; then
+    BACKUP_CRON=$(jq -r '.backup_cron // "0 3 * * 0"' "$OPTIONS_FILE")
+    WEAR_CRON=$(jq -r '.wear_cron // "0 12 * * 1"' "$OPTIONS_FILE")
+    echo "${BACKUP_CRON} /run.sh --backup > /proc/1/fd/1 2>&1" > /etc/crontabs/root
+    echo "${WEAR_CRON} /run.sh --wear > /proc/1/fd/1 2>&1" >> /etc/crontabs/root
+    echo "[✔] Crontab dynamically refreshed via Ingress UI."
+    exit 0
+fi
+
 # --- SERVICE DAEMON INITIALIZATION ---
 echo "[*] Initializing SD Card Backup & Health Manager Daemon..."
 resolve_storage_device
