@@ -1,0 +1,17 @@
+type: entities
+title: "HAOS SD Card & Hardware Health"
+show_header_toggle: false
+entities:
+  - entity: sensor.sd_card_backup_status
+  - entity: sensor.sd_card_backup_progress
+  - entity: sensor.sd_card_wear_estimate
+  - entity: sensor.sd_card_health_status
+  - entity: sensor.sd_card_backup_last_size
+  - entity: sensor.sd_card_backup_duration
+  - type: button
+    name: "Trigger Immediate Backup"
+    icon: mdi:database-arrow-right
+    action_name: "Start"
+    tap_action:
+      action: call-service
+      service: shell_command.run_sd_raw_backup

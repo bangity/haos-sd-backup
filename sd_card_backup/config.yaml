@@ -1,0 +1,61 @@
+name: "SD Card Raw Backup & Health Manager"
+slug: "sd_card_backup"
+description: "Live raw disk backup, multi-core pigz compression, wear diagnostics, Google Material Ingress Web UI, and disaster recovery generators."
+version: "1.0.0"
+url: "https://github.com/bangity/haos-sd-backup"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: application
+boot: auto
+init: false
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:sd
+panel_title: "SD Backup"
+full_access: true
+apparmor: false
+hassio_api: true
+homeassistant_api: true
+privileged:
+  - SYS_ADMIN
+  - SYS_RAWIO
+map:
+  - backup:rw
+  - config:rw
+  - share:rw
+options:
+  source_dev: "auto"
+  target_dir: "/backup"
+  retention_count: 3
+  enable_rescue: false
+  run_backup_on_start: false
+  safe_wear_threshold: 80
+  backup_cron: "0 3 * * 0"
+  wear_cron: "0 12 * * 1"
+  rclone_sync_enabled: false
+  rclone_remote_target: ""
+  smtp_enabled: false
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  smtp_user: ""
+  smtp_pass: ""
+  smtp_to: ""
+schema:
+  source_dev: str
+  target_dir: str
+  retention_count: int
+  enable_rescue: bool
+  run_backup_on_start: bool
+  safe_wear_threshold: int
+  backup_cron: str
+  wear_cron: str
+  rclone_sync_enabled: bool
+  rclone_remote_target: str?
+  smtp_enabled: bool
+  smtp_host: str?
+  smtp_port: int?
+  smtp_user: str?
+  smtp_pass: password?
+  smtp_to: email?
