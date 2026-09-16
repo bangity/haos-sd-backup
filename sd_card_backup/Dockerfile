@@ -1,7 +1,7 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base:latest
-FROM $BUILD_FROM
+ARG BUILD_FROM=alpine:3.20
+FROM ${BUILD_FROM}
 
-RUN apk update && apk add --no-cache \
+RUN apk add --no-cache \
     bash \
     pv \
     pigz \
@@ -15,7 +15,8 @@ RUN apk update && apk add --no-cache \
     python3 \
     tzdata \
     rclone \
-    smartmontools
+    smartmontools \
+    cifs-utils
 
 COPY run.sh /run.sh
 COPY web_ui.py /web_ui.py

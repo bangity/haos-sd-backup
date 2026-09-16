@@ -64,13 +64,23 @@ def save_config(new_opts):
     return cfg
 
 def get_mount_stats(target_path):
-    """Calculates disk capacity, prioritizing bridged network mounts."""
-    # Check if this target points to bridged network storage
-    if target_path == "/backup" and os.path.ismount("/mnt/smb_backup"):
+    """Calculates disk capacity, checking bridged network paths."""
+    candidates = [target_path]
+    # If target is /backup, check bridged host paths
+    if target_path in ["/backup", "/backup/"]:
+        candidates.extend([
+            "/mnt/network_storage/Pi4HomeAssistant",
+            "/proc/1/root/mnt/data/supervisor/mounts/Pi4HomeAssistant"
+        ])
+
+    for p in candidates:
         try:
-            total, used, free = shutil.disk_usage("/mnt/smb_backup")
-            pct_used = int((used / total) * 100) if total > 0 else 0
-            return total, used, free, pct_used
+            if os.path.exists(p):
+                total, used, free = shutil.disk_usage(p)
+                # If path has > 40 GB, it is the external SMB volume
+                if total > 40 * 1073741824:
+                    pct_used = int((used / total) * 100) if total > 0 else 0
+                    return total, used, free, pct_used
         except Exception:
             pass
 
@@ -383,6 +393,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       <span style="font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 0.4rem 0.8rem; border-radius: 12px;">v1.7.0</span>
     </div>
 
+    <!-- MAIN APP TABS -->
     <div class="nav-tabs">
       <button class="nav-tab active" id="tab-btn-backups" onclick="switchMainTab('backups')">
         <span class="material-symbols-outlined">backup</span> Backups &amp; Execution
@@ -395,7 +406,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       </button>
     </div>
 
-    <!-- TAB 1: BACKUPS & ON-DEMAND EXECUTION -->
+    <!-- TAB 1: BACKUPS & MANUAL SNAPSHOT -->
     <div id="tab-content-backups" style="display: flex; flex-direction: column; gap: 1.5rem;">
       <div class="m3-card">
         <div class="card-title">
@@ -438,7 +449,7 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
       </div>
     </div>
 
-    <!-- TAB 2: STORAGE & SCHEDULE CONFIGURATION -->
+    <!-- TAB 2: STORAGE & SCHEDULE CONFIG -->
     <div id="tab-content-config" style="display: none; flex-direction: column; gap: 1.5rem;">
       
       <!-- DETECTED HOST STORAGE TARGETS (SMB & USB) -->
@@ -957,7 +968,6 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
             seen_paths = set()
             token = os.environ.get("SUPERVISOR_TOKEN")
 
-            # 1. Query Supervisor mounts API
             if token:
                 try:
                     req = urllib.request.Request(
@@ -977,11 +987,10 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                                 m_type = rm.get("type", "cifs").upper()
                                 full_remote = f"//{m_server}/{m_share}" if (m_server and m_share) else m_name
 
-                                # Candidate paths inside container and bridged paths
                                 candidate_paths = [
-                                    "/mnt/smb_backup",
-                                    f"/proc/1/root/mnt/data/supervisor/mounts/{m_name}",
                                     "/backup",
+                                    f"/mnt/network_storage/{m_name}",
+                                    f"/proc/1/root/mnt/data/supervisor/mounts/{m_name}",
                                     f"/share/{m_name}"
                                 ]
 
@@ -990,11 +999,12 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
 
                                 for cp in candidate_paths:
                                     tot, usd, fre, pct = get_mount_stats(cp)
-                                    # If disk size exceeds typical SD card size (35GB+), it's the external volume
-                                    if tot > 35 * 1073741824:
+                                    if tot > 40 * 1073741824:
+                                        chosen_path = cp
                                         best_total, best_used, best_free, best_pct = tot, usd, fre, pct
                                         break
                                     elif tot > best_total:
+                                        chosen_path = cp
                                         best_total, best_used, best_free, best_pct = tot, usd, fre, pct
 
                                 free_str = f"{best_used / 1073741824:.1f} GB of {best_total / 1073741824:.1f} GB used ({best_free / 1073741824:.1f} GB free)" if best_total > 0 else "Ready"
@@ -1012,7 +1022,6 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 except Exception as ex:
                     print(f"[!] Supervisor /mounts exception: {ex}", file=sys.stderr)
 
-            # 2. Check Bridged SMB Path Fallback
             if "/backup" not in seen_paths:
                 tot, usd, fre, pct = get_mount_stats("/backup")
                 targets.append({
@@ -1026,7 +1035,6 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 })
                 seen_paths.add("/backup")
 
-            # 3. Detect USB storage devices under /media
             if os.path.exists("/media"):
                 try:
                     for entry in os.listdir("/media"):
@@ -1112,10 +1120,13 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
             try:
                 cmd = subprocess.run(["/run.sh", "--wear-metrics"], capture_output=True, text=True, timeout=5)
                 if cmd.returncode == 0:
-                    parts = cmd.stdout.strip().split("|")
-                    if len(parts) >= 2:
-                        wear_out = parts[0] + ("%" if parts[0] not in ["N/A", "N/A*"] else "")
-                        health_out = parts[1]
+                    metric_lines = [l.strip() for l in cmd.stdout.strip().splitlines() if "|" in l]
+                    if metric_lines:
+                        parts = metric_lines[-1].split("|")
+                        wear_out = parts[0].strip()
+                        health_out = parts[1].strip()
+                        if wear_out not in ["N/A", "N/A*"] and not wear_out.endswith("%"):
+                            wear_out += "%"
             except Exception:
                 pass
 

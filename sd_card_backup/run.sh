@@ -5,63 +5,11 @@ OPTIONS_FILE="/data/options.json"
 LOCK_FILE="/var/run/sd_backup.lock"
 PROGRESS_FILE="/var/run/sd_backup.progress"
 
-# --- READ CONFIGURATION TAB OPTIONS VIA JQ ---
-SOURCE_DEV=$(jq -r '.source_dev // "auto"' "$OPTIONS_FILE")
-TARGET_DIR=$(jq -r '.target_dir // "/backup"' "$OPTIONS_FILE")
-TARGET_DIR="${TARGET_DIR%/}"
-RETENTION_COUNT=$(jq -r '.retention_count // 3' "$OPTIONS_FILE")
-ENABLE_RESCUE=$(jq -r '.enable_rescue // false' "$OPTIONS_FILE")
-RUN_ON_START=$(jq -r '.run_backup_on_start // false' "$OPTIONS_FILE")
-SAFE_WEAR_THRESHOLD=$(jq -r '.safe_wear_threshold // 80' "$OPTIONS_FILE")
-BACKUP_CRON=$(jq -r '.backup_cron // "0 3 * * 0"' "$OPTIONS_FILE")
-WEAR_CRON=$(jq -r '.wear_cron // "0 12 * * 1"' "$OPTIONS_FILE")
-RCLONE_ENABLED=$(jq -r '.rclone_sync_enabled // false' "$OPTIONS_FILE")
-RCLONE_TARGET=$(jq -r '.rclone_remote_target // ""' "$OPTIONS_FILE")
-SMTP_ENABLED=$(jq -r '.smtp_enabled // false' "$OPTIONS_FILE")
-SMTP_HOST=$(jq -r '.smtp_host // ""' "$OPTIONS_FILE")
-SMTP_PORT=$(jq -r '.smtp_port // 587' "$OPTIONS_FILE")
-SMTP_USER=$(jq -r '.smtp_user // ""' "$OPTIONS_FILE")
-SMTP_PASS=$(jq -r '.smtp_pass // ""' "$OPTIONS_FILE")
-SMTP_TO=$(jq -r '.smtp_to // ""' "$OPTIONS_FILE")
-
-# --- DISCOVER & BRIDGE HOST NETWORK STORAGE MOUNTS ---
-bridge_host_network_storage() {
-    echo "[*] Inspecting host mount hierarchy for network storage..."
-    mkdir -p /mnt/smb_backup
-
-    # 1. Search host mounts via /proc/1/mountinfo or nsenter
-    local host_smb_mount=""
-    if [[ -f "/proc/1/mountinfo" ]]; then
-        host_smb_mount=$(grep -i "cifs" /proc/1/mountinfo | head -n1 | awk '{print $5}' || true)
-    fi
-
-    # 2. Check known supervisor mount path locations
-    if [[ -z "$host_smb_mount" ]]; then
-        for path in /proc/1/root/mnt/data/supervisor/mounts/*; do
-            if [[ -d "$path" ]]; then
-                host_smb_mount="$path"
-                break
-            fi
-        done
-    fi
-
-    # If discovered, bind mount directly into /mnt/smb_backup and override /backup
-    if [[ -n "$host_smb_mount" && -d "$host_smb_mount" ]]; then
-        echo "[✔] Found active host SMB mount at: ${host_smb_mount}"
-        mount --bind "$host_smb_mount" /mnt/smb_backup 2>/dev/null || true
-        # Also bind mount over /backup so default targets point straight to the network share
-        mount --bind "$host_smb_mount" /backup 2>/dev/null || true
-        echo "[✔] Successfully bridged network storage to /backup and /mnt/smb_backup"
-    else
-        echo "[!] No host CIFS mount found in /proc/1/root. Using native /backup directory."
-    fi
-}
-
-bridge_host_network_storage
-
 # --- DYNAMIC STORAGE DEVICE RESOLUTION ---
 resolve_storage_device() {
-    if [[ "$SOURCE_DEV" == "auto" || -z "$SOURCE_DEV" ]]; then
+    local source_opt
+    source_opt=$(jq -r '.source_dev // "auto"' "$OPTIONS_FILE" 2>/dev/null || echo "auto")
+    if [[ "$source_opt" == "auto" || -z "$source_opt" ]]; then
         local detected_dev=""
         for mnt in /config /data /; do
             local src
@@ -87,14 +35,13 @@ resolve_storage_device() {
         fi
         SOURCE_DEV="${detected_dev:-/dev/mmcblk0}"
     else
-        SOURCE_DEV="/dev/${SOURCE_DEV#/dev/}"
+        SOURCE_DEV="/dev/${source_opt#/dev/}"
     fi
 }
 
-resolve_storage_device
-
 # --- MULTI-ENGINE STORAGE WEAR & HEALTH TELEMETRY ---
 get_wear_metrics() {
+    resolve_storage_device
     local dev_name
     dev_name=$(basename "$SOURCE_DEV")
     local life_file="/sys/block/${dev_name}/device/life_time"
@@ -163,7 +110,37 @@ get_wear_metrics() {
         fi
     fi
 
-    echo "$wear_val|$status"
+    echo "${wear_val}|${status}"
+}
+
+# --- CLI ROUTING (Evaluated before any daemon logging) ---
+if [[ "${1:-}" == "--wear-metrics" ]]; then
+    get_wear_metrics
+    exit 0
+fi
+
+if [[ "${1:-}" == "--update-cron" ]]; then
+    B_CRON=$(jq -r '.backup_cron // "0 3 * * 0"' "$OPTIONS_FILE")
+    W_CRON=$(jq -r '.wear_cron // "0 12 * * 1"' "$OPTIONS_FILE")
+    echo "${B_CRON} /run.sh --backup > /proc/1/fd/1 2>&1" > /etc/crontabs/root
+    echo "${W_CRON} /run.sh --wear > /proc/1/fd/1 2>&1" >> /etc/crontabs/root
+    exit 0
+fi
+
+# --- BRIDGE HOST NETWORK STORAGE ---
+bridge_host_network_storage() {
+    mkdir -p /mnt/network_storage
+    if [[ -d "/proc/1/root/mnt/data/supervisor/mounts" ]]; then
+        for mnt_dir in /proc/1/root/mnt/data/supervisor/mounts/*; do
+            if [[ -d "$mnt_dir" ]]; then
+                local m_name
+                m_name=$(basename "$mnt_dir")
+                mkdir -p "/mnt/network_storage/${m_name}"
+                mount --bind "$mnt_dir" "/mnt/network_storage/${m_name}" 2>/dev/null || true
+                mount --bind "$mnt_dir" /backup 2>/dev/null || true
+            fi
+        done
+    fi
 }
 
 fire_ha_event() {
@@ -220,7 +197,6 @@ create_ha_persistent_alert() {
 flush_sqlite_wal() {
     local db_path="/config/home-assistant_v2.db"
     if [[ -f "$db_path" ]]; then
-        echo "[*] Checkpointing SQLite WAL database..."
         sqlite3 "$db_path" "PRAGMA busy_timeout = 5000; PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || true
     fi
 }
@@ -228,53 +204,50 @@ flush_sqlite_wal() {
 send_email() {
     local subject="$1"
     local body="$2"
+    local s_enabled s_user s_to s_host s_port s_pass
+    s_enabled=$(jq -r '.smtp_enabled // false' "$OPTIONS_FILE")
+    s_user=$(jq -r '.smtp_user // ""' "$OPTIONS_FILE")
+    s_to=$(jq -r '.smtp_to // ""' "$OPTIONS_FILE")
+    s_host=$(jq -r '.smtp_host // ""' "$OPTIONS_FILE")
+    s_port=$(jq -r '.smtp_port // 587' "$OPTIONS_FILE")
+    s_pass=$(jq -r '.smtp_pass // ""' "$OPTIONS_FILE")
 
-    if [[ "$SMTP_ENABLED" != "true" ]] || [[ -z "$SMTP_USER" ]] || [[ -z "$SMTP_TO" ]] || [[ -z "$SMTP_HOST" ]]; then
+    if [[ "$s_enabled" != "true" ]] || [[ -z "$s_user" ]] || [[ -z "$s_to" ]] || [[ -z "$s_host" ]]; then
         return 0
     fi
 
     local proto="smtp"
     local extra_flags="--ssl-reqd"
-    if [[ "$SMTP_PORT" == "465" ]]; then
-        proto="smtps"
-        extra_flags=""
-    fi
+    [[ "$s_port" == "465" ]] && proto="smtps" && extra_flags=""
 
     local payload
     payload=$(mktemp)
     cat <<EOF > "$payload"
-From: <${SMTP_USER}>
-To: <${SMTP_TO}>
+From: <${s_user}>
+To: <${s_to}>
 Date: $(date -R)
 Subject: ${subject}
 
 ${body}
 EOF
 
-    local curl_err
-    curl_err=$(mktemp)
-    if curl -sS $extra_flags \
-        --url "${proto}://${SMTP_HOST}:${SMTP_PORT}" \
-        --user "${SMTP_USER}:${SMTP_PASS}" \
-        --mail-from "${SMTP_USER}" \
-        --mail-rcpt "${SMTP_TO}" \
-        --upload-file "$payload" 2>"$curl_err"; then
-        rm -f "$payload" "$curl_err"
-        return 0
-    else
-        echo "[!] SMTP alert delivery failed: $(cat "$curl_err")"
-        rm -f "$payload" "$curl_err"
-        return 1
-    fi
+    curl -sS $extra_flags \
+        --url "${proto}://${s_host}:${s_port}" \
+        --user "${s_user}:${s_pass}" \
+        --mail-from "${s_user}" \
+        --mail-rcpt "${s_to}" \
+        --upload-file "$payload" &>/dev/null || true
+    rm -f "$payload"
 }
 
 prune_artifacts() {
-    local pattern="$1"
-    local keep="$2"
+    local target_dir="$1"
+    local pattern="$2"
+    local keep="$3"
     local files=()
     while IFS= read -r f; do
         [[ -n "$f" ]] && files+=("$f")
-    done < <(find "$TARGET_DIR" -maxdepth 1 -name "$pattern" | sort)
+    done < <(find "$target_dir" -maxdepth 1 -name "$pattern" | sort)
 
     local total=${#files[@]}
     if (( total > keep )); then
@@ -282,8 +255,7 @@ prune_artifacts() {
         for (( i=0; i<to_delete; i++ )); do
             local target="${files[$i]}"
             if [[ "$target" != "${ACTIVE_LOG_FILE:-}" ]]; then
-                rm -f "$target"
-                rm -f "${target}.sha256"
+                rm -f "$target" "${target}.sha256"
             fi
         done
     fi
@@ -322,14 +294,13 @@ fi
 
 DEV_TYPE=$(lsblk -n -o TYPE "$DEST_DEV" 2>/dev/null || echo "")
 if [[ "$DEV_TYPE" == "part" ]] || [[ "$DEST_DEV" =~ (mmcblk|nvme|loop)[0-9]+p[0-9]+$ ]] || [[ "$DEST_DEV" =~ /dev/sd[a-z]+[0-9]+$ ]]; then
-    echo "[✖ ERROR] You targeted an individual partition slice (${DEST_DEV})."
-    echo "        Target the root disk device (e.g., /dev/sdb, /dev/mmcblk0, /dev/nvme0n1)."
+    echo "[✖ ERROR] Targeted an individual partition slice (${DEST_DEV}). Target the root disk."
     exit 1
 fi
 
 TARGET_BYTES=$(blockdev --getsize64 "$DEST_DEV" 2>/dev/null || lsblk -b -n -d -o SIZE "$DEST_DEV" 2>/dev/null || echo 0)
 if [[ "$TARGET_BYTES" -lt "$REQUIRED_BYTES" ]]; then
-    echo "[✖ ERROR] Target device ($TARGET_BYTES bytes) is smaller than required original size ($REQUIRED_BYTES bytes)."
+    echo "[✖ ERROR] Target device ($TARGET_BYTES bytes) is smaller than original size ($REQUIRED_BYTES bytes)."
     exit 1
 fi
 
@@ -343,7 +314,6 @@ fi
 
 read -rp "Format / wipe partition signatures before flashing? (y/n): " wipe_opt
 if [[ "$wipe_opt" =~ ^[Yy]$ ]]; then
-    echo "[*] Wiping filesystem and partition table signatures..."
     wipefs -a -f "$DEST_DEV" 2>/dev/null || true
     dd if=/dev/zero of="$DEST_DEV" bs=1M count=32 conv=fsync status=none 2>/dev/null || true
     sync
@@ -361,7 +331,7 @@ echo "[*] Decompressing and streaming sectors to ${DEST_DEV}..."
 $DECOMP_CMD "$FULL_IMAGE" | $PV_PIPE | dd of="$DEST_DEV" bs=4M conv=fsync status=none
 sync
 
-echo "[*] Relocating backup GPT data structures to physical drive boundary..."
+echo "[*] Relocating backup GPT data structures..."
 if command -v sgdisk &>/dev/null; then
     sgdisk -e "$DEST_DEV" || true
 else
@@ -379,20 +349,15 @@ umount "${DEST_DEV}"* 2>/dev/null || true
 
 if [[ -b "${DEST_DEV}p8" ]]; then
     P8="${DEST_DEV}p8"
-elif [[ -b "${DEST_DEV}8" ]]; then
-    P8="${DEST_DEV}8"
-elif [[ "$DEST_DEV" =~ [0-9]$ ]]; then
-    P8="${DEST_DEV}p8"
 else
     P8="${DEST_DEV}8"
 fi
 
 for i in {1..5}; do [[ -b "$P8" ]] && break || sleep 1; done
 
-echo "[*] Expanding ext4 filesystem on ${P8}..."
 e2fsck -fy "$P8" || true
 resize2fs "$P8" || true
-echo "[✔] Restore and expansion complete! Drive is bootable in Home Assistant OS."
+echo "[✔] Restore and expansion complete! Drive is bootable."
 EOF
     sed -i "s|PLACEHOLDER_ARCHIVE|${archive_name}|g" "$linux_script"
     sed -i "s|PLACEHOLDER_MIN_BYTES|${min_bytes}|g" "$linux_script"
@@ -438,7 +403,6 @@ if ($TargetDisk.Size -lt $RequiredBytes) { Write-Error "Disk capacity is smaller
 
 $WipeChoice = Read-Host "Wipe partition table first? (y/n)"
 if ($WipeChoice -match "^[Yy]") {
-    Write-Host "[*] Clearing partitions and volume access paths..." -ForegroundColor Yellow
     Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter } | ForEach-Object {
         Remove-PartitionAccessPath -DiskNumber $_.DiskNumber -PartitionNumber $_.PartitionNumber -AccessPath "$($_.DriveLetter):" -ErrorAction SilentlyContinue
     }
@@ -475,9 +439,6 @@ try {
 }
 
 Write-Host "`n[✔] Flashing complete! Drive restored." -ForegroundColor Green
-Write-Host "[!] NOTE: Windows cannot resize Linux ext4 partitions natively." -ForegroundColor Yellow
-Write-Host "    If your target drive is larger than the original image, boot a Linux live environment" -ForegroundColor Yellow
-Write-Host "    to expand Partition 8 to full capacity." -ForegroundColor Yellow
 Read-Host "Press Enter to exit..."
 EOF
     sed -i "s|PLACEHOLDER_ARCHIVE|${archive_name}|g" "$win_script"
@@ -486,16 +447,14 @@ EOF
 }
 
 run_wear_diagnostic() {
-    resolve_storage_device
     IFS="|" read -r wear_val status_str < <(get_wear_metrics)
-    echo "[*] Storage Wear: ${wear_val} (Status: ${status_str})"
     update_ha_sensor "sensor.sd_card_wear_estimate" "${wear_val}" "Storage Wear Level" "mdi:harddisk"
     update_ha_sensor "sensor.sd_card_health_status" "$status_str" "Storage Health Status" "mdi:heart-pulse"
 
-    local threshold="${SAFE_WEAR_THRESHOLD:-80}"
+    local threshold
+    threshold=$(jq -r '.safe_wear_threshold // 80' "$OPTIONS_FILE")
     if [[ "$wear_val" =~ ^[0-9]+$ ]] && (( wear_val > threshold )); then
         local warn_msg="WARNING: Storage wear on ${SOURCE_DEV} has reached ${wear_val}% (Safe limit: ${threshold}%). Status: ${status_str}. Replace disk soon."
-        echo "[!] ${warn_msg}"
         create_ha_persistent_alert "Storage Wear Alert" "$warn_msg" "sd_card_wear_alert"
         send_email "CRITICAL: Storage Wear Alert (${wear_val}%)" "$warn_msg" || true
         send_ha_notification "Storage Wear Alert" "$warn_msg"
@@ -513,10 +472,22 @@ run_backup() {
     resolve_storage_device
     bridge_host_network_storage
 
+    local target_dir
+    target_dir=$(jq -r '.target_dir // "/backup"' "$OPTIONS_FILE")
+    target_dir="${target_dir%/}"
+    local retention_count
+    retention_count=$(jq -r '.retention_count // 3' "$OPTIONS_FILE")
+    local enable_rescue
+    enable_rescue=$(jq -r '.enable_rescue // false' "$OPTIONS_FILE")
+    local rclone_enabled
+    rclone_enabled=$(jq -r '.rclone_sync_enabled // false' "$OPTIONS_FILE")
+    local rclone_target
+    rclone_target=$(jq -r '.rclone_remote_target // ""' "$OPTIONS_FILE")
+
     local timestamp
     timestamp=$(date +%Y-%m-%d_%H-%M-%S)
-    local output_archive="${TARGET_DIR}/haos_backup_${timestamp}.img.gz"
-    local status_log="${TARGET_DIR}/haos_backup_${timestamp}.log"
+    local output_archive="${target_dir}/haos_backup_${timestamp}.img.gz"
+    local status_log="${target_dir}/haos_backup_${timestamp}.log"
     ACTIVE_LOG_FILE="$status_log"
 
     local monitor_pid=""
@@ -525,7 +496,7 @@ run_backup() {
             kill "${monitor_pid}" 2>/dev/null || true
             wait "${monitor_pid}" 2>/dev/null || true
         fi
-        rm -f "${TARGET_DIR}/.backup_probe" 2>/dev/null || true
+        rm -f "${target_dir}/.backup_probe" 2>/dev/null || true
         rm -f "$PROGRESS_FILE" 2>/dev/null || true
         flock -u 200 2>/dev/null || true
         exec 200>&- 2>/dev/null || true
@@ -540,19 +511,19 @@ run_backup() {
     echo " Starting Live Disk Backup: ${SOURCE_DEV} -> ${output_archive}"
     echo "================================================================"
 
-    mkdir -p "$TARGET_DIR" 2>/dev/null || true
+    mkdir -p "$target_dir" 2>/dev/null || true
 
-    if ! touch "${TARGET_DIR}/.backup_probe" 2>/dev/null; then
-        echo "[✖ ERROR] Target directory ${TARGET_DIR} is read-only or unreachable."
+    if ! touch "${target_dir}/.backup_probe" 2>/dev/null; then
+        echo "[✖ ERROR] Target directory ${target_dir} is read-only or unreachable."
         update_ha_sensor "sensor.sd_card_backup_status" "Failed - Target Unreachable" "SD Card Backup Status" "mdi:alert-circle"
-        send_email "HAOS Backup FAILED" "Target storage ${TARGET_DIR} is unreachable or read-only." || true
+        send_email "HAOS Backup FAILED" "Target storage ${target_dir} is unreachable or read-only." || true
         cleanup_backup
         return 1
     fi
-    rm -f "${TARGET_DIR}/.backup_probe"
+    rm -f "${target_dir}/.backup_probe"
 
     local avail_kb
-    avail_kb=$(df -kP "$TARGET_DIR" | awk 'NR==2 {print $4}')
+    avail_kb=$(df -kP "$target_dir" | awk 'NR==2 {print $4}')
     if [[ ! "$avail_kb" =~ ^[0-9]+$ ]] || (( avail_kb < 15000000 )); then
         echo "[✖ ERROR] Insufficient storage space on target (<15GB available)."
         update_ha_sensor "sensor.sd_card_backup_status" "Failed - Low Disk Space" "SD Card Backup Status" "mdi:alert-circle"
@@ -578,8 +549,8 @@ MINIMUM REQUIRED DISK SIZE FOR RESTORE: ${dev_human} (${dev_bytes} bytes)
 Timestamp:          ${timestamp}
 Source Device:      ${SOURCE_DEV}
 Target Archive:     $(basename "$output_archive")
-Storage Path:       ${TARGET_DIR}
-Retention Count:    ${RETENTION_COUNT}
+Storage Path:       ${target_dir}
+Retention Count:    ${retention_count}
 ================================================================================
 EOF
 
@@ -600,7 +571,7 @@ EOF
     start_time=$(date +%s)
 
     local dd_flags="status=none"
-    [[ "$ENABLE_RESCUE" == "true" ]] && dd_flags="conv=noerror,sync status=none"
+    [[ "$enable_rescue" == "true" ]] && dd_flags="conv=noerror,sync status=none"
 
     echo "[*] Streaming sectors through multi-core pigz (${pigz_threads} threads)..."
     (
@@ -686,17 +657,17 @@ EOF
     final_size=$(ls -lh "$output_archive" | awk '{print $5}')
 
     echo "[*] Generating companion recovery tools..."
-    generate_restore_scripts "$TARGET_DIR" "$timestamp" "$(basename "$output_archive")" "$dev_bytes" "$dev_human"
+    generate_restore_scripts "$target_dir" "$timestamp" "$(basename "$output_archive")" "$dev_bytes" "$dev_human"
 
-    echo "[*] Pruning obsolete backups (Keeping last ${RETENTION_COUNT} sets)..."
-    prune_artifacts "haos_backup_*.img.gz" "$RETENTION_COUNT"
-    prune_artifacts "haos_backup_*.log" "$RETENTION_COUNT"
-    prune_artifacts "restore_*.sh" "$RETENTION_COUNT"
-    prune_artifacts "restore_*.ps1" "$RETENTION_COUNT"
+    echo "[*] Pruning obsolete backups (Keeping last ${retention_count} sets)..."
+    prune_artifacts "$target_dir" "haos_backup_*.img.gz" "$retention_count"
+    prune_artifacts "$target_dir" "haos_backup_*.log" "$retention_count"
+    prune_artifacts "$target_dir" "restore_*.sh" "$retention_count"
+    prune_artifacts "$target_dir" "restore_*.ps1" "$retention_count"
 
-    if [[ "$RCLONE_ENABLED" == "true" ]] && [[ -n "$RCLONE_TARGET" ]]; then
-        echo "[*] Triggering secondary 3-2-1 cloud sync to ${RCLONE_TARGET}..."
-        rclone copy "$output_archive" "$RCLONE_TARGET" --checksum --log-level NOTICE >> "$status_log" 2>&1 || echo "[!] Rclone sync returned a non-zero exit status."
+    if [[ "$rclone_enabled" == "true" ]] && [[ -n "$rclone_target" ]]; then
+        echo "[*] Triggering secondary 3-2-1 cloud sync to ${rclone_target}..."
+        rclone copy "$output_archive" "$rclone_target" --checksum --log-level NOTICE >> "$status_log" 2>&1 || echo "[!] Rclone sync returned non-zero exit status."
     fi
 
     cat <<EOF >> "$status_log"
@@ -723,28 +694,14 @@ EOF
     cleanup_backup
 }
 
-# --- CLI ROUTING FOR INTERNAL CRON & INGRESS API ---
 if [[ "${1:-}" == "--backup" ]]; then
     run_backup
     exit 0
 fi
 
 if [[ "${1:-}" == "--wear" ]]; then
+    resolve_storage_device
     run_wear_diagnostic
-    exit 0
-fi
-
-if [[ "${1:-}" == "--wear-metrics" ]]; then
-    get_wear_metrics
-    exit 0
-fi
-
-if [[ "${1:-}" == "--update-cron" ]]; then
-    BACKUP_CRON=$(jq -r '.backup_cron // "0 3 * * 0"' "$OPTIONS_FILE")
-    WEAR_CRON=$(jq -r '.wear_cron // "0 12 * * 1"' "$OPTIONS_FILE")
-    echo "${BACKUP_CRON} /run.sh --backup > /proc/1/fd/1 2>&1" > /etc/crontabs/root
-    echo "${WEAR_CRON} /run.sh --wear > /proc/1/fd/1 2>&1" >> /etc/crontabs/root
-    echo "[✔] Crontab dynamically refreshed via Ingress UI."
     exit 0
 fi
 
@@ -752,24 +709,22 @@ fi
 echo "[*] Initializing SD Card Backup & Health Manager Daemon..."
 bridge_host_network_storage
 resolve_storage_device
-echo "[*] Configuration: Source=${SOURCE_DEV}, Target=${TARGET_DIR}, Retention=${RETENTION_COUNT}"
 
 echo "[*] Launching Material Ingress Web Server on port 8099..."
 python3 /web_ui.py &
 
 run_wear_diagnostic
 
+RUN_ON_START=$(jq -r '.run_backup_on_start // false' "$OPTIONS_FILE")
 if [[ "$RUN_ON_START" == "true" ]]; then
     echo "[*] 'run_backup_on_start' is enabled. Initiating immediate snapshot..."
     run_backup || true
 fi
 
-echo "[*] Configuring internal cron scheduler..."
+BACKUP_CRON=$(jq -r '.backup_cron // "0 3 * * 0"' "$OPTIONS_FILE")
+WEAR_CRON=$(jq -r '.wear_cron // "0 12 * * 1"' "$OPTIONS_FILE")
 echo "${BACKUP_CRON} /run.sh --backup > /proc/1/fd/1 2>&1" > /etc/crontabs/root
 echo "${WEAR_CRON} /run.sh --wear > /proc/1/fd/1 2>&1" >> /etc/crontabs/root
-echo "[*] Active Schedules:"
-echo "    - Disk Raw Backup:  ${BACKUP_CRON}"
-echo "    - Wear Diagnostic:  ${WEAR_CRON}"
 
 echo "[✔] Daemon active. Listening for scheduled triggers..."
 exec crond -f -l 2
