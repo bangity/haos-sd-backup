@@ -11,12 +11,14 @@ RUN apk add --no-cache \
     sqlite \
     parted \
     gptfdisk \
+    e2fsprogs \
     jq \
     python3 \
     tzdata \
     rclone \
     smartmontools \
-    cifs-utils
+    cifs-utils \
+    openssl
 
 COPY run.sh /run.sh
 COPY web_ui.py /web_ui.py
